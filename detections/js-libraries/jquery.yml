@@ -1,0 +1,7 @@
+name: jQuery
+category: JS Library
+website: https://jquery.com
+checks:
+  js:
+    - expression: "jQuery.fn.jquery"
+      version: true

@@ -1,0 +1,10 @@
+services:
+  core:
+    build: .
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./detections:/app/detections:ro
+      - ./config.yml:/app/config.yml:ro
+    environment:
+      - FINGERPRINTER_BROWSER_ENABLED=true

@@ -1,0 +1,20 @@
+server:
+  port: 3001
+  read_timeout: 30s
+
+scanner:
+  max_redirects: 10
+  request_timeout: 10s
+  headers:
+    User-Agent: "Fingerprinter/1.0"
+    # Accept-Language: "en-US,en;q=0.9"
+  concurrent_scans: 50
+  # proxy: "http://127.0.0.1:8080"
+
+browser:
+  enabled: true
+  pool_size: 5
+  page_timeout: 15s
+
+detections:
+  yaml_dir: "./detections/"

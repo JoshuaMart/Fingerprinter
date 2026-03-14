@@ -1,0 +1,10 @@
+name: PHP
+category: Language
+website: https://www.php.net
+checks:
+  headers:
+    x-powered-by:
+      pattern: 'PHP'
+      version: '(\d+\.\d+\.\d+)'
+  cookies:
+    PHPSESSID:

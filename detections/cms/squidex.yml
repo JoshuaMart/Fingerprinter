@@ -1,0 +1,6 @@
+name: Squidex
+category: CMS
+website: https://squidex.io
+checks:
+  favicon_hash:
+    - 1099097618
