@@ -132,6 +132,7 @@ Response:
     "sitemap": "https://example.com/sitemap.xml",
     "favicon": "https://example.com/favicon.ico"
   },
+  "external_hosts":[],
   "scanned_at": "2026-03-13T12:00:00Z"
 }
 ```
