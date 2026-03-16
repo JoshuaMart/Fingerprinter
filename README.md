@@ -2,39 +2,40 @@
 
 Open-source web technology detection engine with a built-in REST API.
 
-Fingerprinter scans a URL, follows redirects, analyzes HTTP headers, HTML body, cookies, meta tags, JavaScript globals, and returns a list of detected technologies with version information.
+Fingerprinter scans a URL using a headless browser, captures the full redirect chain via CDP network events, analyzes HTTP headers, rendered HTML, cookies, meta tags, JavaScript globals, and returns a list of detected technologies with version information.
 
 ## Features
 
-- HTTP redirect chain following with hop-by-hop capture
-- YAML-based detection system (headers, body, meta, cookies, paths, JS)
+- Browser-based redirect chain capture via CDP Network events
+- YAML-based detection system (headers, body, meta, cookies, paths, JS, favicon hash)
 - Complex Go-based detectors for advanced detection logic
-- Headless browser support via Rod (JS evaluation, screenshots)
+- Headless browser via Lightpanda (remote CDP) — JS evaluation, rendered DOM analysis
 - Concurrent scan limiting via semaphore
+- Shodan-compatible favicon mmh3 hashing
 
 ## Installation
 
-### Binary
-
-```bash
-# Build for current platform
-make build
-
-# Cross-compile (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64)
-make build-all
-
-# Run
-./bin/fingerprinter --config config.yml
-```
-
-### Docker
+### Docker (recommended)
 
 ```bash
 docker compose up -d
+```
 
-# Or manually
-docker build -t fingerprinter .
-docker run -p 3001:3001 -v ./config.yml:/app/config.yml fingerprinter
+This starts two containers:
+- **lightpanda** — headless browser exposing CDP on port 9222
+- **core** — Fingerprinter API on port 3001, connected to Lightpanda
+
+### Binary
+
+Requires a running Lightpanda (or CDP-compatible) browser accessible via WebSocket.
+
+```bash
+# Start Lightpanda
+docker run -d -p 9222:9222 lightpanda/browser:nightly
+
+# Build and run
+make build
+./bin/fingerprinter --config config.yml
 ```
 
 ### CLI Flags
@@ -63,13 +64,12 @@ scanner:
   # proxy: "http://127.0.0.1:8080"
 
 browser:
-  enabled: true
+  control_url: "ws://localhost:9222"
   pool_size: 5
   page_timeout: 15s
 
 detections:
   yaml_dir: "./detections/"
-
 ```
 
 ### Environment Variables
@@ -80,7 +80,7 @@ All configuration values can be overridden with environment variables:
 |---|---|
 | `FINGERPRINTER_SERVER_PORT` | HTTP server port |
 | `FINGERPRINTER_SCANNER_USER_AGENT` | User-Agent header |
-| `FINGERPRINTER_BROWSER_ENABLED` | Enable headless browser (`true`/`false`) |
+| `FINGERPRINTER_BROWSER_CONTROL_URL` | Browser CDP WebSocket URL (e.g. `ws://localhost:9222`) |
 | `FINGERPRINTER_DETECTIONS_YAML_DIR` | Path to YAML detections directory |
 | `FINGERPRINTER_SCANNER_PROXY` | HTTP proxy URL (e.g. `http://127.0.0.1:8080`) |
 
@@ -96,7 +96,6 @@ curl -X POST http://localhost:3001/scan \
   -d '{
     "url": "https://example.com",
     "options": {
-      "browser_detection": true,
       "timeout_seconds": 30,
       "max_redirects": 10
     }
@@ -227,8 +226,8 @@ checks:
 | `body` | Regex on response body | `version` regex on same body match |
 | `meta` | Regex on `<meta>` tag content attribute | `version` regex on content value |
 | `cookies` | Cookie name existence, optional value regex | No |
-| `paths` | HTTP request to path, check status code | No |
-| `js` | JS expression in browser (requires `browser_detection: true`) | If `version: true`, expression result is the version |
+| `paths` | Navigate to path via browser, check status code | No |
+| `js` | JS expression evaluated in browser context | If `version: true`, expression result is the version |
 | `favicon_hash` | Shodan-compatible mmh3 hash of the site favicon | No |
 
 #### Example: PHP
@@ -264,12 +263,12 @@ The `Detect` method receives a context with all available data:
 
 ```go
 type DetectionContext struct {
-    Responses   []ChainedResponse  // All hops in the redirect chain
-    Document    *goquery.Document  // Parsed DOM of the final response
-    HTTPClient  *http.Client       // HTTP client for additional requests
-    Browser     *rod.Browser       // Rod browser instance (nil if disabled)
-    BrowserPage *rod.Page          // Current page (nil if disabled)
-    BaseURL     string             // Final URL after redirects
+    Responses   []ChainedResponse      // All hops in the redirect chain
+    Document    *goquery.Document      // Parsed rendered DOM (post-JS)
+    HTTPClient  *http.Client           // HTTP client for direct requests (Go detectors)
+    BrowserPool BrowserNavigator       // Navigate to URLs via browser pool
+    BrowserPage *rod.Page              // Current page for JS evaluation
+    BaseURL     string                 // Final URL after redirects
 }
 ```
 
@@ -312,6 +311,8 @@ make build      # Build for current platform
 make build-all  # Cross-compile all platforms
 make docker     # Build Docker image
 ```
+
+Browser-dependent tests (browser, scanner, server packages) require a running CDP-compatible instance. Set `FINGERPRINTER_BROWSER_CONTROL_URL` or ensure `ws://localhost:9222` is available. Tests skip gracefully when no browser is reachable.
 
 ## License
 
