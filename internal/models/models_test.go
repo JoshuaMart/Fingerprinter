@@ -10,9 +10,8 @@ func TestScanRequestJSON(t *testing.T) {
 	req := ScanRequest{
 		URL: "https://example.com",
 		Options: &ScanOptions{
-			MaxRedirects:     5,
-			BrowserDetection: true,
-			TimeoutSeconds:   30,
+			MaxRedirects:   5,
+			TimeoutSeconds: 30,
 		},
 	}
 
@@ -31,9 +30,6 @@ func TestScanRequestJSON(t *testing.T) {
 	}
 	if got.Options.MaxRedirects != 5 {
 		t.Errorf("MaxRedirects: got %d, want 5", got.Options.MaxRedirects)
-	}
-	if !got.Options.BrowserDetection {
-		t.Error("BrowserDetection should be true")
 	}
 }
 

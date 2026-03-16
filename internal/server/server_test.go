@@ -17,6 +17,13 @@ import (
 	"github.com/JoshuaMart/fingerprinter/internal/scanner"
 )
 
+func browserControlURL() string {
+	if v := os.Getenv("FINGERPRINTER_BROWSER_CONTROL_URL"); v != "" {
+		return v
+	}
+	return "ws://localhost:9222"
+}
+
 func setupServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
 
@@ -43,15 +50,16 @@ checks:
 			ConcurrentScans: 5,
 		},
 		Browser: config.BrowserConfig{
-			Enabled:  false,
-			PoolSize: 1,
+			PoolSize:    1,
+			PageTimeout: 10 * time.Second,
+			ControlURL:  browserControlURL(),
 		},
 		Detections: config.DetectionsConfig{YAMLDir: dir},
 	}
 
 	scn, err := scanner.New(cfg)
 	if err != nil {
-		t.Fatalf("failed to create scanner: %v", err)
+		t.Skipf("browser not available, skipping: %v", err)
 	}
 	t.Cleanup(func() { scn.Close() })
 

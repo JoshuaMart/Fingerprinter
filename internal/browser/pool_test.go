@@ -5,9 +5,17 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 )
+
+func controlURL() string {
+	if v := os.Getenv("FINGERPRINTER_BROWSER_CONTROL_URL"); v != "" {
+		return v
+	}
+	return "ws://localhost:9222"
+}
 
 func startTestServer() *httptest.Server {
 	mux := http.NewServeMux()
@@ -31,19 +39,16 @@ func startTestServer() *httptest.Server {
 
 func setupPool(t *testing.T) *Pool {
 	t.Helper()
-	pool, err := NewPool(2, 10*time.Second)
+	pool, err := NewPool(2, 10*time.Second, controlURL())
 	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
+		t.Skipf("browser not available, skipping: %v", err)
 	}
 	t.Cleanup(func() { pool.Close() })
 	return pool
 }
 
 func TestPoolCreateAndClose(t *testing.T) {
-	pool := setupPool(t)
-	if pool.Browser() == nil {
-		t.Fatal("expected non-nil browser")
-	}
+	_ = setupPool(t)
 }
 
 func TestNavigate(t *testing.T) {
@@ -66,6 +71,23 @@ func TestNavigate(t *testing.T) {
 	}
 	if title != "Hello World" {
 		t.Errorf("expected 'Hello World', got %q", title)
+	}
+}
+
+func TestNavigateCapturesChain(t *testing.T) {
+	srv := startTestServer()
+	defer srv.Close()
+	pool := setupPool(t)
+
+	err := pool.Navigate(context.Background(), srv.URL, func(result *NavigateResult) error {
+		if len(result.Chain) == 0 {
+			t.Error("expected at least one response in chain")
+		}
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("Navigate failed: %v", err)
 	}
 }
 
@@ -118,31 +140,6 @@ func TestEvalJSUndefined(t *testing.T) {
 	}
 }
 
-func TestScreenshot(t *testing.T) {
-	srv := startTestServer()
-	defer srv.Close()
-	pool := setupPool(t)
-
-	err := pool.Navigate(context.Background(), srv.URL, func(result *NavigateResult) error {
-		data, err := Screenshot(result.Page)
-		if err != nil {
-			return err
-		}
-		if len(data) == 0 {
-			t.Error("expected non-empty screenshot")
-		}
-		// PNG magic bytes
-		if data[0] != 0x89 || data[1] != 'P' || data[2] != 'N' || data[3] != 'G' {
-			t.Error("expected PNG format")
-		}
-		return nil
-	})
-
-	if err != nil {
-		t.Fatalf("Navigate failed: %v", err)
-	}
-}
-
 func TestExtractDOM(t *testing.T) {
 	srv := startTestServer()
 	defer srv.Close()
@@ -165,9 +162,6 @@ func TestExtractDOM(t *testing.T) {
 }
 
 func TestNavigateReturnsExternalHosts(t *testing.T) {
-	// With httptest, all servers bind to 127.0.0.1 so we can't truly test
-	// cross-host detection. We verify the mechanism works: a page with no
-	// external resources returns an empty list.
 	srv := startTestServer()
 	defer srv.Close()
 	pool := setupPool(t)

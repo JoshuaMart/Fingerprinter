@@ -30,9 +30,9 @@ type ScannerConfig struct {
 }
 
 type BrowserConfig struct {
-	Enabled     bool          `yaml:"enabled"`
 	PoolSize    int           `yaml:"pool_size"`
 	PageTimeout time.Duration `yaml:"page_timeout"`
+	ControlURL  string        `yaml:"control_url"`
 }
 
 type DetectionsConfig struct {
@@ -54,9 +54,9 @@ func defaults() *Config {
 			ConcurrentScans: 50,
 		},
 		Browser: BrowserConfig{
-			Enabled:     true,
 			PoolSize:    5,
 			PageTimeout: 15 * time.Second,
+			ControlURL:  "ws://localhost:9222",
 		},
 		Detections: DetectionsConfig{
 			YAMLDir: "./detections/",
@@ -99,8 +99,8 @@ func loadEnvOverrides(cfg *Config) {
 		}
 		cfg.Scanner.Headers["User-Agent"] = v
 	}
-	if v := os.Getenv("FINGERPRINTER_BROWSER_ENABLED"); v != "" {
-		cfg.Browser.Enabled = v == "true" || v == "1"
+	if v := os.Getenv("FINGERPRINTER_BROWSER_CONTROL_URL"); v != "" {
+		cfg.Browser.ControlURL = v
 	}
 	if v := os.Getenv("FINGERPRINTER_DETECTIONS_YAML_DIR"); v != "" {
 		cfg.Detections.YAMLDir = v
@@ -122,6 +122,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Browser.PoolSize < 1 {
 		return fmt.Errorf("browser.pool_size must be at least 1")
+	}
+	if cfg.Browser.ControlURL == "" {
+		return fmt.Errorf("browser.control_url must not be empty")
 	}
 	return nil
 }

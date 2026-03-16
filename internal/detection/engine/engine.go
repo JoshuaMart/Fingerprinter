@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/go-rod/rod"
 
 	"github.com/JoshuaMart/fingerprinter/internal/models"
 )
@@ -36,14 +35,35 @@ func (e *Engine) Detectors() []models.Detector {
 }
 
 // BuildContext creates a DetectionContext from chain results and parsed DOM.
-func BuildContext(responses []models.ChainedResponse, doc *goquery.Document, httpClient *http.Client, browser *rod.Browser, baseURL string) *models.DetectionContext {
+func BuildContext(responses []models.ChainedResponse, doc *goquery.Document, httpClient *http.Client, browserPool models.BrowserNavigator, baseURL string) *models.DetectionContext {
 	return &models.DetectionContext{
-		Responses:  responses,
-		Document:   doc,
-		HTTPClient: httpClient,
-		Browser:    browser,
-		BaseURL:    baseURL,
+		Responses:   responses,
+		Document:    doc,
+		HTTPClient:  httpClient,
+		BrowserPool: browserPool,
+		BaseURL:     baseURL,
 	}
+}
+
+// CollectJSExpressions gathers all JS expressions from registered detectors
+// that implement the JSExpressionProvider interface.
+func (e *Engine) CollectJSExpressions() []string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	seen := make(map[string]struct{})
+	var exprs []string
+	for _, d := range e.detectors {
+		if jp, ok := d.(interface{ JSExpressions() []string }); ok {
+			for _, expr := range jp.JSExpressions() {
+				if _, dup := seen[expr]; !dup {
+					seen[expr] = struct{}{}
+					exprs = append(exprs, expr)
+				}
+			}
+		}
+	}
+	return exprs
 }
 
 type detectionEntry struct {

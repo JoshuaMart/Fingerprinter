@@ -19,8 +19,10 @@ cmd/fingerprinter/       Entry point (main.go)
 internal/
   server/                Chi HTTP server (POST /scan, GET /health, GET /detections)
   scanner/               Scan pipeline orchestrator
-  chain/                 HTTP redirect chain follower + DOM parser
-  browser/               Rod browser pool (headless Chromium), hijack routing, JS eval
+  chain/                 URL validation, DOM parser, cookie/header helpers
+  browser/               Rod browser pool (remote Chrome via CDP), network capture, JS eval
+    network.go           CDP Network event capture (redirect chain, external hosts)
+    pool.go              Page pool, Navigate, NavigateAndCapture
   detection/
     yaml/                YAML-based detector loader, schema, favicon hashing
     engine/              Parallel detection engine (runs all detectors concurrently)
@@ -28,20 +30,27 @@ internal/
       cms/               CMS-specific detectors (e.g. Magento)
   httpclient/            HTTP client factory (timeout, proxy)
   metadata/              robots.txt, sitemap, favicon metadata fetcher
-  models/                Shared types (ScanRequest, ScanResult, DetectionContext, etc.)
+  models/                Shared types (ScanRequest, ScanResult, DetectionContext, BrowserNavigator, etc.)
   config/                YAML config loader
 detections/              YAML detection files organized by category (cms/, js-libraries/, languages/)
 ```
 
+## Architecture — Browser-only pipeline
+
+All navigation goes through a remote Chrome browser (headless, Docker). There is no HTTP chain follower — the browser captures the redirect chain via CDP Network events.
+
+**Chrome** (via `browserless/chromium`) runs as a separate Docker service exposing CDP on port 9222. Rod connects to it via `control_url` (WebSocket).
+
+The HTTP client is kept only for: Go detector probes (e.g. Magento GraphQL), metadata (robots.txt, sitemap), and favicon byte fetching for mmh3 hash.
+
 ## Scan pipeline (scanner.go)
 
-1. **HTTP chain** — Follow redirects (max configurable hops), capture each hop
-2. **DOM parsing** — Parse final response with goquery
-3. **Browser** (optional) — Rod opens page, monitors external hosts via request hijacking
-4. **404 probe** — Request random path to capture error page for detection
-5. **Detections** — Engine runs all YAML + Go detectors in parallel against DetectionContext
-6. **Metadata** — Fetch robots.txt, sitemap, favicon
-7. **Aggregation** — Assemble final ScanResult JSON
+1. **Browser navigate** — Rod opens URL in Chrome, captures redirect chain + external hosts via CDP Network events
+2. **DOM parsing** — Parse rendered HTML (post-JS) with goquery
+3. **404 probe** — Navigate to random path via browser to capture error page
+4. **Detections** — Engine runs all YAML + Go detectors in parallel against DetectionContext
+5. **Metadata** — Fetch robots.txt, sitemap, favicon via HTTP
+6. **Aggregation** — Assemble final ScanResult JSON
 
 ## Adding detections
 
@@ -58,8 +67,8 @@ checks:
   body:                # Match response body patterns
   meta:                # Match HTML meta tags
   cookies:             # Match cookie names
-  paths:               # Probe specific paths (status code check)
-  js:                  # Evaluate JS in browser context (requires browser_detection)
+  paths:               # Probe specific paths via browser (status code check)
+  js:                  # Evaluate JS in browser context
   favicon:             # Match favicon mmh3 hash (Shodan-compatible)
 ```
 
@@ -84,10 +93,20 @@ GitHub Actions runs on push/PR to main:
 
 See `config.example.yml`. Config loaded from `--config` flag. Key sections: `server`, `scanner`, `browser`, `detections`. LLM section (`llm`) is planned but not yet implemented.
 
+Browser `control_url` defaults to `ws://localhost:9222`. Override with env var `FINGERPRINTER_BROWSER_CONTROL_URL`.
+
 ## Key dependencies
 
 - `go-chi/chi/v5` — HTTP routing
-- `go-rod/rod` — Headless browser (Chromium)
+- `go-rod/rod` — Browser automation (connects to remote Chrome via CDP)
 - `PuerkitoBio/goquery` — DOM parsing
 - `twmb/murmur3` — Favicon hash (Shodan-compatible mmh3)
 - `gopkg.in/yaml.v3` — YAML config + detection loading
+
+## Running with Docker
+
+```bash
+docker compose up -d   # Starts Chrome + Fingerprinter core
+```
+
+Chrome runs as a sidecar container. The core service connects to it via `ws://chrome:3000`.
