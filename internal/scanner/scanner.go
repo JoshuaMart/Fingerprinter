@@ -179,7 +179,7 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 // non-nil results in the results map.
 func (s *Scanner) evalJS(page *rod.Page, expressions []string, results map[string]string) {
 	for _, expr := range expressions {
-		result, err := page.Eval("() => " + expr)
+		result, err := page.Eval("() => { try { return " + expr + " } catch(e) { return undefined } }")
 		if err != nil {
 			slog.Debug("JS pre-eval failed", "expression", expr, "error", err)
 			continue

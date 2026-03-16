@@ -14,7 +14,7 @@ func controlURL() string {
 	if v := os.Getenv("FINGERPRINTER_BROWSER_CONTROL_URL"); v != "" {
 		return v
 	}
-	return "ws://localhost:9222"
+	return "http://localhost:9222"
 }
 
 func startTestServer() *httptest.Server {
@@ -96,41 +96,21 @@ func TestEvalJS(t *testing.T) {
 	defer srv.Close()
 	pool := setupPool(t)
 
-	var version string
-	var flagResult string
 	err := pool.Navigate(context.Background(), srv.URL, func(result *NavigateResult) error {
-		var err error
-		version, err = EvalJS(result.Page, "window.testVersion")
+		obj, err := result.Page.Eval("() => { try { return window.testVersion } catch(e) { return undefined } }")
 		if err != nil {
 			return err
 		}
-		flagResult, err = EvalJS(result.Page, "window.testFlag")
-		return err
-	})
+		if obj.Value.String() != "3.6.0" {
+			t.Errorf("expected version '3.6.0', got %q", obj.Value.String())
+		}
 
-	if err != nil {
-		t.Fatalf("Navigate failed: %v", err)
-	}
-	if version != "3.6.0" {
-		t.Errorf("expected version '3.6.0', got %q", version)
-	}
-	if flagResult != "true" {
-		t.Errorf("expected 'true', got %q", flagResult)
-	}
-}
-
-func TestEvalJSUndefined(t *testing.T) {
-	srv := startTestServer()
-	defer srv.Close()
-	pool := setupPool(t)
-
-	err := pool.Navigate(context.Background(), srv.URL, func(result *NavigateResult) error {
-		val, err := EvalJS(result.Page, "window.nonExistent")
+		obj, err = result.Page.Eval("() => { try { return window.testFlag } catch(e) { return undefined } }")
 		if err != nil {
 			return err
 		}
-		if val != "" {
-			t.Errorf("expected empty string for undefined, got %q", val)
+		if obj.Value.String() != "true" {
+			t.Errorf("expected 'true', got %q", obj.Value.String())
 		}
 		return nil
 	})
@@ -140,18 +120,18 @@ func TestEvalJSUndefined(t *testing.T) {
 	}
 }
 
-func TestExtractDOM(t *testing.T) {
+func TestEvalJSUndefined(t *testing.T) {
 	srv := startTestServer()
 	defer srv.Close()
 	pool := setupPool(t)
 
 	err := pool.Navigate(context.Background(), srv.URL, func(result *NavigateResult) error {
-		dom, err := ExtractDOM(result.Page)
+		obj, err := result.Page.Eval("() => { try { return window.nonExistent } catch(e) { return undefined } }")
 		if err != nil {
 			return err
 		}
-		if dom == "" {
-			t.Error("expected non-empty DOM extraction")
+		if !obj.Value.Nil() {
+			t.Errorf("expected nil for undefined, got %v", obj.Value)
 		}
 		return nil
 	})

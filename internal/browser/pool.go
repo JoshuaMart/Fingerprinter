@@ -330,42 +330,6 @@ func parseTitle(body []byte) *string {
 	}
 }
 
-// EvalJS evaluates a JavaScript expression on the given page and returns the result as a string.
-func EvalJS(page *rod.Page, expression string) (string, error) {
-	obj, err := page.Eval("() => " + expression)
-	if err != nil {
-		return "", err
-	}
-	if obj == nil || obj.Value.Nil() {
-		return "", nil
-	}
-	return obj.Value.String(), nil
-}
-
-// ExtractDOM extracts visible text and structural elements from the page.
-func ExtractDOM(page *rod.Page) (string, error) {
-	result, err := page.Eval(`() => {
-		const sel = 'h1, h2, h3, h4, h5, h6, p, li, a, nav, header, footer, meta[name="description"]';
-		const elements = document.querySelectorAll(sel);
-		const parts = [];
-		elements.forEach(el => {
-			const tag = el.tagName.toLowerCase();
-			const text = el.innerText ? el.innerText.trim() : '';
-			if (tag === 'meta') {
-				parts.push('meta-description: ' + (el.content || ''));
-			} else if (text) {
-				parts.push(tag + ': ' + text);
-			}
-		});
-		return parts.join('\n');
-	}`)
-	if err != nil {
-		return "", fmt.Errorf("extracting DOM: %w", err)
-	}
-
-	return result.Value.String(), nil
-}
-
 // resolveWSURL fetches /json/version from the CDP endpoint to get the full
 // WebSocket debugger URL. Chrome requires Host to be localhost or an IP,
 // so we override the Host header in the request.

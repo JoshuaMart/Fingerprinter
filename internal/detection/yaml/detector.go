@@ -222,7 +222,7 @@ func matchJS(ctx *models.DetectionContext, check JSCheck) (string, bool) {
 		return "", false
 	}
 
-	result, err := ctx.BrowserPage.Eval("() => " + check.Expression)
+	result, err := ctx.BrowserPage.Eval("() => { try { return " + check.Expression + " } catch(e) { return undefined } }")
 	if err != nil {
 		slog.Warn("JS eval failed", "expression", check.Expression, "error", err)
 		return "", false
