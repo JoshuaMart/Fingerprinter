@@ -1,13 +1,13 @@
 services:
   chrome:
-    image: ghcr.io/browserless/chromium
+    image: chromedp/headless-shell
+    command:
+      - --ignore-certificate-errors
+      - --remote-allow-origins=*
     ports:
-      - "3000:3000"
-    environment:
-      - TIMEOUT=60000
-      - CONCURRENT=10
+      - "9222:9222"
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/json/version"]
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9222' 2>/dev/null"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -24,4 +24,4 @@ services:
       - ./detections:/app/detections:ro
       - ./config.yml:/app/config.yml:ro
     environment:
-      - FINGERPRINTER_BROWSER_CONTROL_URL=ws://chrome:3000
+      - FINGERPRINTER_BROWSER_CONTROL_URL=http://chrome:9222
