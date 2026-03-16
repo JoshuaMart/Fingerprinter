@@ -1,10 +1,20 @@
 services:
+  chrome:
+    image: ghcr.io/browserless/chromium
+    ports:
+      - "3000:3000"
+    environment:
+      - TIMEOUT=60000
+      - CONCURRENT=10
+
   core:
     build: .
     ports:
       - "3001:3001"
+    depends_on:
+      - chrome
     volumes:
       - ./detections:/app/detections:ro
       - ./config.yml:/app/config.yml:ro
     environment:
-      - FINGERPRINTER_BROWSER_ENABLED=true
+      - FINGERPRINTER_BROWSER_CONTROL_URL=ws://chrome:3000
