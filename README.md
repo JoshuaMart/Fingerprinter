@@ -31,7 +31,7 @@ Requires a running Chrome (or CDP-compatible) browser accessible via WebSocket.
 
 ```bash
 # Start Chrome
-docker run -d -p 9222:3000 browserless/chromium
+docker run -d -p 9222:9222 chromedp/headless-shell
 
 # Build and run
 make build
@@ -64,7 +64,7 @@ scanner:
   # proxy: "http://127.0.0.1:8080"
 
 browser:
-  control_url: "ws://localhost:9222"
+  control_url: "http://localhost:9222"
   pool_size: 5
   page_timeout: 15s
 
@@ -80,7 +80,7 @@ All configuration values can be overridden with environment variables:
 |---|---|
 | `FINGERPRINTER_SERVER_PORT` | HTTP server port |
 | `FINGERPRINTER_SCANNER_USER_AGENT` | User-Agent header |
-| `FINGERPRINTER_BROWSER_CONTROL_URL` | Browser CDP WebSocket URL (e.g. `ws://localhost:9222`) |
+| `FINGERPRINTER_BROWSER_CONTROL_URL` | Browser CDP URL (e.g. `http://localhost:9222`) |
 | `FINGERPRINTER_DETECTIONS_YAML_DIR` | Path to YAML detections directory |
 | `FINGERPRINTER_SCANNER_PROXY` | HTTP proxy URL (e.g. `http://127.0.0.1:8080`) |
 

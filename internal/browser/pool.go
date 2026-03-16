@@ -11,6 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
+	"io"
+
 	"github.com/JoshuaMart/fingerprinter/internal/models"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
@@ -28,9 +31,15 @@ type Pool struct {
 
 // NewPool connects to a remote browser via CDP.
 func NewPool(_ int, pageTimeout time.Duration, controlURL string) (*Pool, error) {
-	b := rod.New().ControlURL(controlURL)
+	wsURL, err := resolveWSURL(controlURL)
+	if err != nil {
+		return nil, fmt.Errorf("resolving browser WebSocket URL from %s: %w", controlURL, err)
+	}
+	slog.Info("resolved browser WebSocket URL", "control", controlURL, "ws", wsURL)
+
+	b := rod.New().ControlURL(wsURL)
 	if err := b.Connect(); err != nil {
-		return nil, fmt.Errorf("connecting to browser at %s: %w", controlURL, err)
+		return nil, fmt.Errorf("connecting to browser at %s: %w", wsURL, err)
 	}
 
 	// Health check — open and close a blank page
@@ -57,9 +66,14 @@ func (p *Pool) reconnect() error {
 		_ = p.browser.Close()
 	}
 
-	b := rod.New().ControlURL(p.controlURL)
+	wsURL, err := resolveWSURL(p.controlURL)
+	if err != nil {
+		return fmt.Errorf("resolving browser WebSocket URL from %s: %w", p.controlURL, err)
+	}
+
+	b := rod.New().ControlURL(wsURL)
 	if err := b.Connect(); err != nil {
-		return fmt.Errorf("reconnecting to browser at %s: %w", p.controlURL, err)
+		return fmt.Errorf("reconnecting to browser at %s: %w", wsURL, err)
 	}
 	p.browser = b
 	return nil
@@ -350,6 +364,58 @@ func ExtractDOM(page *rod.Page) (string, error) {
 	}
 
 	return result.Value.String(), nil
+}
+
+// resolveWSURL fetches /json/version from the CDP endpoint to get the full
+// WebSocket debugger URL. Chrome requires Host to be localhost or an IP,
+// so we override the Host header in the request.
+func resolveWSURL(controlURL string) (string, error) {
+	parsed, err := url.Parse(controlURL)
+	if err != nil {
+		return "", fmt.Errorf("parsing control URL: %w", err)
+	}
+
+	if parsed.Scheme == "ws" || parsed.Scheme == "wss" {
+		return controlURL, nil
+	}
+
+	endpoint := controlURL + "/json/version"
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("creating request: %w", err)
+	}
+	// Chrome rejects /json/version when Host is not localhost or an IP
+	req.Host = "localhost"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetching /json/version: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading /json/version response: %w", err)
+	}
+
+	var info struct {
+		WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
+	}
+	if err := json.Unmarshal(body, &info); err != nil {
+		return "", fmt.Errorf("parsing /json/version: %w", err)
+	}
+	if info.WebSocketDebuggerURL == "" {
+		return "", fmt.Errorf("/json/version did not return webSocketDebuggerUrl")
+	}
+
+	// Replace the host (Chrome returns localhost) with the actual control host
+	wsURL, err := url.Parse(info.WebSocketDebuggerURL)
+	if err != nil {
+		return "", fmt.Errorf("parsing WebSocket URL: %w", err)
+	}
+	wsURL.Host = parsed.Host
+
+	return wsURL.String(), nil
 }
 
 // Close marks the pool as closed. Does not close the remote browser — its

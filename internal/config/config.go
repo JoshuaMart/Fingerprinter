@@ -56,7 +56,7 @@ func defaults() *Config {
 		Browser: BrowserConfig{
 			PoolSize:    5,
 			PageTimeout: 15 * time.Second,
-			ControlURL:  "ws://localhost:9222",
+			ControlURL:  "http://localhost:9222",
 		},
 		Detections: DetectionsConfig{
 			YAMLDir: "./detections/",

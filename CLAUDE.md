@@ -39,7 +39,7 @@ detections/              YAML detection files organized by category (cms/, js-li
 
 All navigation goes through a remote Chrome browser (headless, Docker). There is no HTTP chain follower — the browser captures the redirect chain via CDP Network events.
 
-**Chrome** (via `browserless/chromium`) runs as a separate Docker service exposing CDP on port 9222. Rod connects to it via `control_url` (WebSocket).
+**Chrome** (via `chromedp/headless-shell`) runs as a separate Docker service exposing CDP on port 9222. Rod connects to it via `control_url` (HTTP, resolved to WebSocket).
 
 The HTTP client is kept only for: Go detector probes (e.g. Magento GraphQL), metadata (robots.txt, sitemap), and favicon byte fetching for mmh3 hash.
 
@@ -93,7 +93,7 @@ GitHub Actions runs on push/PR to main:
 
 See `config.example.yml`. Config loaded from `--config` flag. Key sections: `server`, `scanner`, `browser`, `detections`. LLM section (`llm`) is planned but not yet implemented.
 
-Browser `control_url` defaults to `ws://localhost:9222`. Override with env var `FINGERPRINTER_BROWSER_CONTROL_URL`.
+Browser `control_url` defaults to `http://localhost:9222`. Override with env var `FINGERPRINTER_BROWSER_CONTROL_URL`.
 
 ## Key dependencies
 
@@ -109,4 +109,4 @@ Browser `control_url` defaults to `ws://localhost:9222`. Override with env var `
 docker compose up -d   # Starts Chrome + Fingerprinter core
 ```
 
-Chrome runs as a sidecar container. The core service connects to it via `ws://chrome:3000`.
+Chrome runs as a sidecar container. The core service connects to it via `http://chrome:9222`.
