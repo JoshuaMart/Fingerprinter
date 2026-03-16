@@ -28,8 +28,8 @@ func TestDefaults(t *testing.T) {
 	if cfg.Scanner.ConcurrentScans != 50 {
 		t.Errorf("expected default concurrent_scans 50, got %d", cfg.Scanner.ConcurrentScans)
 	}
-	if cfg.Browser.ControlURL != "ws://localhost:9222" {
-		t.Errorf("expected default control_url 'ws://localhost:9222', got %q", cfg.Browser.ControlURL)
+	if cfg.Browser.ControlURL != "http://localhost:9222" {
+		t.Errorf("expected default control_url 'http://localhost:9222', got %q", cfg.Browser.ControlURL)
 	}
 }
 

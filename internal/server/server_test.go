@@ -21,7 +21,7 @@ func browserControlURL() string {
 	if v := os.Getenv("FINGERPRINTER_BROWSER_CONTROL_URL"); v != "" {
 		return v
 	}
-	return "ws://localhost:9222"
+	return "http://localhost:9222"
 }
 
 func setupServer(t *testing.T) (*Server, *httptest.Server) {
