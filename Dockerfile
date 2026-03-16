@@ -12,11 +12,9 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o finger
 
 # ---
 
-FROM alpine:3.20
+FROM alpine:3.23
 
-RUN apk add --no-cache ca-certificates chromium
-
-ENV CHROME_PATH=/usr/bin/chromium-browser
+RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
 
