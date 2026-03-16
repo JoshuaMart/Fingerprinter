@@ -12,7 +12,7 @@ scanner:
   # proxy: "http://127.0.0.1:8080"
 
 browser:
-  enabled: true
+  control_url: "http://localhost:9222"
   pool_size: 5
   page_timeout: 15s
 

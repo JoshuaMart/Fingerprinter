@@ -1,8 +1,9 @@
 package yaml
 
 import (
+	"context"
 	"fmt"
-	"net/http"
+	"log/slog"
 	"regexp"
 	"strings"
 
@@ -22,6 +23,15 @@ func NewDetector(def Definition) *Detector {
 
 func (d *Detector) Name() string     { return d.def.Name }
 func (d *Detector) Category() string { return d.def.Category }
+
+// JSExpressions returns all JS expressions this detector needs evaluated.
+func (d *Detector) JSExpressions() []string {
+	exprs := make([]string, len(d.def.Checks.JS))
+	for i, js := range d.def.Checks.JS {
+		exprs[i] = js.Expression
+	}
+	return exprs
+}
 
 // Detect runs all checks defined in the YAML and returns a result.
 func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult, error) {
@@ -76,17 +86,17 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 		}
 	}
 
-	// Path checks — request additional paths on the base URL
+	// Path checks — navigate via browser pool
 	for _, check := range d.def.Checks.Paths {
 		total++
-		if matchPath(ctx.HTTPClient, ctx.BaseURL, check) {
+		if matchPath(ctx.BrowserPool, ctx.BaseURL, check) {
 			matches++
 		}
 	}
 
-	// JS checks — require browser, skip if unavailable
+	// JS checks — require browser page, skip if unavailable
 	for _, check := range d.def.Checks.JS {
-		if ctx.Browser == nil {
+		if ctx.BrowserPage == nil {
 			continue
 		}
 		total++
@@ -184,33 +194,43 @@ func matchCookie(cookies map[string]string, cookieName string, check CookieCheck
 	return re.MatchString(cookies[cookieName])
 }
 
-func matchPath(client *http.Client, baseURL string, check PathCheck) bool {
-	if client == nil {
+func matchPath(navigator models.BrowserNavigator, baseURL string, check PathCheck) bool {
+	if navigator == nil {
 		return false
 	}
-	url := strings.TrimRight(baseURL, "/") + check.Path
-	resp, err := client.Get(url) //nolint:noctx // path checks are simple GETs
+	u := strings.TrimRight(baseURL, "/") + check.Path
+	resp, err := navigator.NavigateAndCapture(context.Background(), u)
 	if err != nil {
 		return false
 	}
-	_ = resp.Body.Close()
 	return resp.StatusCode == check.Status
 }
 
 func matchJS(ctx *models.DetectionContext, check JSCheck) (string, bool) {
+	// Use pre-evaluated cached results (preferred — page may be closed)
+	if ctx.JSResults != nil {
+		if val, ok := ctx.JSResults[check.Expression]; ok {
+			if check.Version {
+				return val, true
+			}
+			return "", true
+		}
+	}
+
+	// Fallback to live evaluation
 	if ctx.BrowserPage == nil {
 		return "", false
 	}
 
-	result, err := ctx.BrowserPage.Eval("() => " + check.Expression)
+	result, err := ctx.BrowserPage.Eval("() => { try { return " + check.Expression + " } catch(e) { return undefined } }")
 	if err != nil {
+		slog.Warn("JS eval failed", "expression", check.Expression, "error", err)
 		return "", false
 	}
 	if result == nil || result.Value.Nil() {
 		return "", false
 	}
 
-	// If version: true, the JS expression itself returns the version string
 	if check.Version {
 		return result.Value.String(), true
 	}

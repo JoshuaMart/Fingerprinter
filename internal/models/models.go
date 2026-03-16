@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -16,9 +17,8 @@ type ScanRequest struct {
 
 // ScanOptions configures the scan behavior.
 type ScanOptions struct {
-	MaxRedirects     int  `json:"max_redirects,omitempty"`
-	BrowserDetection bool `json:"browser_detection"`
-	TimeoutSeconds   int  `json:"timeout_seconds,omitempty"`
+	MaxRedirects   int `json:"max_redirects,omitempty"`
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 }
 
 // ScanResult is the complete output of a scan.
@@ -57,14 +57,20 @@ type ScanMetadata struct {
 	Favicon   *string `json:"favicon"`
 }
 
+// BrowserNavigator allows detectors to navigate via the browser pool.
+type BrowserNavigator interface {
+	NavigateAndCapture(ctx context.Context, url string) (*ChainedResponse, error)
+}
+
 // DetectionContext provides all data available to a detector.
 type DetectionContext struct {
 	Responses   []ChainedResponse
 	Document    *goquery.Document
 	HTTPClient  *http.Client
-	Browser     *rod.Browser
+	BrowserPool BrowserNavigator
 	BrowserPage *rod.Page
 	BaseURL     string
+	JSResults   map[string]string // Pre-evaluated JS expression results (expression → value)
 }
 
 // Detector is the interface for complex Go-based detectors.

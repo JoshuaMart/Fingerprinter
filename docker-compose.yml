@@ -1,10 +1,27 @@
 services:
+  chrome:
+    image: chromedp/headless-shell
+    command:
+      - --ignore-certificate-errors
+      - --remote-allow-origins=*
+    ports:
+      - "9222:9222"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9222' 2>/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
   core:
     build: .
     ports:
       - "3001:3001"
+    depends_on:
+      chrome:
+        condition: service_healthy
     volumes:
       - ./detections:/app/detections:ro
       - ./config.yml:/app/config.yml:ro
     environment:
-      - FINGERPRINTER_BROWSER_ENABLED=true
+      - FINGERPRINTER_BROWSER_CONTROL_URL=http://chrome:9222

@@ -1,7 +1,9 @@
 package yaml
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +14,25 @@ import (
 	"github.com/JoshuaMart/fingerprinter/internal/models"
 	"github.com/PuerkitoBio/goquery"
 )
+
+// mockNavigator implements models.BrowserNavigator for testing path checks.
+type mockNavigator struct {
+	client *http.Client
+}
+
+func (m *mockNavigator) NavigateAndCapture(_ context.Context, url string) (*models.ChainedResponse, error) {
+	resp, err := m.client.Get(url) //nolint:noctx
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	return &models.ChainedResponse{
+		URL:        url,
+		StatusCode: resp.StatusCode,
+		Body:       body,
+	}, nil
+}
 
 // --- Loader tests ---
 
@@ -354,9 +375,9 @@ func TestCheckPaths(t *testing.T) {
 	})
 
 	ctx := &models.DetectionContext{
-		Responses:  []models.ChainedResponse{},
-		HTTPClient: srv.Client(),
-		BaseURL:    srv.URL,
+		Responses:   []models.ChainedResponse{},
+		BrowserPool: &mockNavigator{client: srv.Client()},
+		BaseURL:     srv.URL,
 	}
 
 	res, err := det.Detect(ctx)
@@ -385,9 +406,9 @@ func TestCheckPathsNoMatch(t *testing.T) {
 	})
 
 	ctx := &models.DetectionContext{
-		Responses:  []models.ChainedResponse{},
-		HTTPClient: srv.Client(),
-		BaseURL:    srv.URL,
+		Responses:   []models.ChainedResponse{},
+		BrowserPool: &mockNavigator{client: srv.Client()},
+		BaseURL:     srv.URL,
 	}
 
 	res, err := det.Detect(ctx)
@@ -414,7 +435,6 @@ func TestCheckJSSkippedWithoutBrowser(t *testing.T) {
 
 	ctx := &models.DetectionContext{
 		Responses: []models.ChainedResponse{},
-		Browser:   nil,
 	}
 
 	res, err := det.Detect(ctx)
@@ -469,9 +489,9 @@ func TestCombinedChecks(t *testing.T) {
 				Body:       []byte(`<link href="/wp-content/themes/style.css">`),
 			},
 		},
-		Document:   doc,
-		HTTPClient: srv.Client(),
-		BaseURL:    srv.URL,
+		Document:    doc,
+		BrowserPool: &mockNavigator{client: srv.Client()},
+		BaseURL:     srv.URL,
 	}
 
 	res, err := det.Detect(ctx)

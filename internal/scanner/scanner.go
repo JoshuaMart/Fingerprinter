@@ -1,15 +1,18 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/PuerkitoBio/goquery"
+	"github.com/go-rod/rod"
 
 	"github.com/JoshuaMart/fingerprinter/internal/browser"
 	"github.com/JoshuaMart/fingerprinter/internal/chain"
@@ -20,7 +23,6 @@ import (
 	"github.com/JoshuaMart/fingerprinter/internal/httpclient"
 	"github.com/JoshuaMart/fingerprinter/internal/metadata"
 	"github.com/JoshuaMart/fingerprinter/internal/models"
-	"github.com/go-rod/rod"
 )
 
 // Scanner orchestrates the full scan pipeline.
@@ -32,7 +34,7 @@ type Scanner struct {
 	semaphore   chan struct{}
 }
 
-// New creates a Scanner, loads detections, and optionally starts the browser pool.
+// New creates a Scanner, loads detections, and starts the browser pool.
 func New(cfg *config.Config) (*Scanner, error) {
 	s := &Scanner{
 		cfg: cfg,
@@ -59,14 +61,12 @@ func New(cfg *config.Config) (*Scanner, error) {
 		s.engine.Register(det)
 	}
 
-	// Start browser pool if enabled
-	if cfg.Browser.Enabled {
-		pool, err := browser.NewPool(cfg.Browser.PoolSize, cfg.Browser.PageTimeout)
-		if err != nil {
-			return nil, fmt.Errorf("starting browser pool: %w", err)
-		}
-		s.browserPool = pool
+	// Start browser pool (mandatory)
+	pool, err := browser.NewPool(cfg.Browser.PoolSize, cfg.Browser.PageTimeout, cfg.Browser.ControlURL)
+	if err != nil {
+		return nil, fmt.Errorf("starting browser pool: %w", err)
 	}
+	s.browserPool = pool
 
 	return s, nil
 }
@@ -89,128 +89,120 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	opts := req.Options
-	if opts == nil {
-		opts = &models.ScanOptions{}
+	// Validate URL
+	if err := chain.ValidateURL(req.URL); err != nil {
+		return nil, err
 	}
 
-	maxRedirects := opts.MaxRedirects
-	if maxRedirects <= 0 {
-		maxRedirects = s.cfg.Scanner.MaxRedirects
-	}
+	// Browser navigation + full scan pipeline inside callback (page is alive).
+	// Chrome supports multiple concurrent pages, so probe404 and path checks
+	// can open separate pages while the main page is still available for JS eval.
+	var result *models.ScanResult
 
-	// Step 1 — HTTP chain
-	chainCfg := chain.Config{
-		MaxRedirects: maxRedirects,
-		Headers:      s.cfg.Scanner.Headers,
-	}
-	responses, err := chain.Follow(ctx, req.URL, chainCfg, s.httpClient)
-	if err != nil {
-		return nil, fmt.Errorf("HTTP chain: %w", err)
-	}
-
-	if len(responses) == 0 {
-		return nil, fmt.Errorf("no responses received")
-	}
-
-	finalResp := &responses[len(responses)-1]
-	baseURL := finalResp.URL
-
-	// Step 2 — Parse DOM
-	doc, err := chain.ParseDocument(finalResp)
-	if err != nil {
-		slog.Warn("DOM parsing failed, continuing without document", "error", err)
-	}
-
-	// Step 3 — Browser (optional)
-	var browserPage *rod.Page
-	var externalHosts []string
-
-	useBrowser := opts.BrowserDetection && s.browserPool != nil
-	if useBrowser {
-		err := s.browserPool.Navigate(ctx, baseURL, func(result *browser.NavigateResult) error {
-			browserPage = result.Page
-			externalHosts = result.ExternalHosts
-			return nil
-		})
-		if err != nil {
-			slog.Warn("browser navigation failed, continuing without browser", "error", err)
+	err := s.browserPool.Navigate(ctx, req.URL, func(navResult *browser.NavigateResult) error {
+		responses := navResult.Chain
+		if len(responses) == 0 {
+			return fmt.Errorf("no responses received")
 		}
-	}
 
-	// Step 4 — 404 probe (for detection only, not included in output chain)
-	detResponses := make([]models.ChainedResponse, len(responses))
-	copy(detResponses, responses)
-	if notFound, err := s.probe404(ctx, baseURL); err == nil {
-		detResponses = append(detResponses, *notFound)
-	}
+		finalResp := &responses[len(responses)-1]
+		baseURL := finalResp.URL
 
-	// Step 5 — Detections (parallel, handled by engine)
-	detCtx := &models.DetectionContext{
-		Responses:   detResponses,
-		Document:    doc,
-		HTTPClient:  s.httpClient,
-		Browser:     nil,
-		BrowserPage: browserPage,
-		BaseURL:     baseURL,
-	}
-	if s.browserPool != nil {
-		detCtx.Browser = s.browserPool.Browser()
-	}
+		// Extract rendered HTML for goquery document
+		var doc *goquery.Document
+		renderedHTML, htmlErr := navResult.Page.HTML()
+		if htmlErr != nil {
+			slog.Warn("failed to extract rendered HTML", "error", htmlErr)
+		} else {
+			rendered := []byte(renderedHTML)
+			if len(rendered) > len(finalResp.Body) {
+				finalResp.Body = rendered
+				finalResp.ResponseSize = len(rendered)
+			}
+			var parseErr error
+			doc, parseErr = goquery.NewDocumentFromReader(bytes.NewReader(rendered))
+			if parseErr != nil {
+				slog.Warn("DOM parsing failed, continuing without document", "error", parseErr)
+			}
+		}
 
-	technologies := s.engine.Run(detCtx)
+		// Pre-evaluate JS expressions while page is alive
+		jsResults := make(map[string]string)
+		jsExpressions := s.engine.CollectJSExpressions()
+		s.evalJS(navResult.Page, jsExpressions, jsResults)
 
-	// Step 6 — Metadata
-	cookies := chain.ExtractCookies(responses)
-	scanMeta := metadata.Fetch(s.httpClient, baseURL, doc)
+		// 404 probe via browser (separate page)
+		detResponses := make([]models.ChainedResponse, len(responses))
+		copy(detResponses, responses)
+		if notFound, probeErr := s.probe404(ctx, baseURL); probeErr == nil {
+			detResponses = append(detResponses, *notFound)
+		}
 
-	// Step 7 — Aggregate
-	result := &models.ScanResult{
-		URL:           req.URL,
-		Chain:         responses,
-		Technologies:  technologies,
-		Cookies:       cookies,
-		Metadata:      scanMeta,
-		ExternalHosts: externalHosts,
-		ScannedAt:     time.Now().UTC(),
+		// Detections (parallel, handled by engine)
+		detCtx := &models.DetectionContext{
+			Responses:   detResponses,
+			Document:    doc,
+			HTTPClient:  s.httpClient,
+			BrowserPool: s.browserPool,
+			BrowserPage: navResult.Page,
+			JSResults:   jsResults,
+			BaseURL:     baseURL,
+		}
+
+		technologies := s.engine.Run(detCtx)
+
+		// Metadata (HTTP — robots.txt, sitemap, favicon)
+		cookies := chain.ExtractCookies(responses)
+		scanMeta := metadata.Fetch(s.httpClient, baseURL, doc)
+
+		// Aggregate
+		result = &models.ScanResult{
+			URL:           req.URL,
+			Chain:         responses,
+			Technologies:  technologies,
+			Cookies:       cookies,
+			Metadata:      scanMeta,
+			ExternalHosts: navResult.ExternalHosts,
+			ScannedAt:     time.Now().UTC(),
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scan: %w", err)
 	}
 
 	return result, nil
 }
 
-// probe404 requests a random non-existent path to capture the 404 response for detection analysis.
+// evalJS evaluates a list of JS expressions on the given page and stores
+// non-nil results in the results map.
+func (s *Scanner) evalJS(page *rod.Page, expressions []string, results map[string]string) {
+	for _, expr := range expressions {
+		result, err := page.Eval("() => { try { return " + expr + " } catch(e) { return undefined } }")
+		if err != nil {
+			slog.Debug("JS pre-eval failed", "expression", expr, "error", err)
+			continue
+		}
+		if result == nil || result.Value.Nil() {
+			continue
+		}
+		val := result.Value.String()
+		if val != "" {
+			results[expr] = val
+			slog.Debug("JS pre-eval success", "expression", expr, "value", val)
+		}
+	}
+}
+
+// probe404 navigates to a random non-existent path via the browser to capture the 404 response.
 func (s *Scanner) probe404(ctx context.Context, baseURL string) (*models.ChainedResponse, error) {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	path := "/fp-" + hex.EncodeToString(b)
-
 	probeURL := strings.TrimRight(baseURL, "/") + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	for k, v := range s.cfg.Scanner.Headers {
-		req.Header.Set(k, v)
-	}
 
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	return &models.ChainedResponse{
-		URL:        probeURL,
-		StatusCode: resp.StatusCode,
-		Headers:    chain.FlattenHeaders(resp.Header),
-		RawHeaders: resp.Header,
-		Body:       body,
-	}, nil
+	return s.browserPool.NavigateAndCapture(ctx, probeURL)
 }
 
 // Detectors returns the list of registered detectors (for /detections endpoint).
