@@ -312,7 +312,7 @@ make build-all  # Cross-compile all platforms
 make docker     # Build Docker image
 ```
 
-Browser-dependent tests (browser, scanner, server packages) require a running CDP-compatible instance. Set `FINGERPRINTER_BROWSER_CONTROL_URL` or ensure `ws://localhost:9222` is available. Tests skip gracefully when no browser is reachable.
+Browser-dependent tests (browser, scanner, server packages) require a running CDP-compatible instance. Set `FINGERPRINTER_BROWSER_CONTROL_URL` or ensure `http://localhost:9222` is available. Tests skip gracefully when no browser is reachable.
 
 ## License
 
