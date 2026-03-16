@@ -9,7 +9,7 @@ Fingerprinter scans a URL using a headless browser, captures the full redirect c
 - Browser-based redirect chain capture via CDP Network events
 - YAML-based detection system (headers, body, meta, cookies, paths, JS, favicon hash)
 - Complex Go-based detectors for advanced detection logic
-- Headless browser via Lightpanda (remote CDP) — JS evaluation, rendered DOM analysis
+- Headless browser via Chrome (remote CDP) — JS evaluation, rendered DOM analysis
 - Concurrent scan limiting via semaphore
 - Shodan-compatible favicon mmh3 hashing
 
@@ -22,16 +22,16 @@ docker compose up -d
 ```
 
 This starts two containers:
-- **lightpanda** — headless browser exposing CDP on port 9222
-- **core** — Fingerprinter API on port 3001, connected to Lightpanda
+- **chrome** — headless Chromium exposing CDP on port 9222
+- **core** — Fingerprinter API on port 3001, connected to Chrome
 
 ### Binary
 
-Requires a running Lightpanda (or CDP-compatible) browser accessible via WebSocket.
+Requires a running Chrome (or CDP-compatible) browser accessible via WebSocket.
 
 ```bash
-# Start Lightpanda
-docker run -d -p 9222:9222 lightpanda/browser:nightly
+# Start Chrome
+docker run -d -p 9222:3000 browserless/chromium
 
 # Build and run
 make build
