@@ -6,13 +6,20 @@ services:
     environment:
       - TIMEOUT=60000
       - CONCURRENT=10
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/json/version"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
   core:
     build: .
     ports:
       - "3001:3001"
     depends_on:
-      - chrome
+      chrome:
+        condition: service_healthy
     volumes:
       - ./detections:/app/detections:ro
       - ./config.yml:/app/config.yml:ro
