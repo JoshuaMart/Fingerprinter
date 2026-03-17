@@ -24,13 +24,16 @@ import (
 type Pool struct {
 	browser     *rod.Browser
 	controlURL  string
+	proxyURL    string
 	pageTimeout time.Duration
 	mu          sync.Mutex
 	closed      bool
 }
 
 // NewPool connects to a remote browser via CDP.
-func NewPool(_ int, pageTimeout time.Duration, controlURL string) (*Pool, error) {
+// If proxyURL is non-empty, a dedicated browser context is created so that
+// all pages opened by the pool route traffic through the proxy.
+func NewPool(_ int, pageTimeout time.Duration, controlURL, proxyURL string) (*Pool, error) {
 	wsURL, err := resolveWSURL(controlURL)
 	if err != nil {
 		return nil, fmt.Errorf("resolving browser WebSocket URL from %s: %w", controlURL, err)
@@ -40,6 +43,21 @@ func NewPool(_ int, pageTimeout time.Duration, controlURL string) (*Pool, error)
 	b := rod.New().ControlURL(wsURL)
 	if err := b.Connect(); err != nil {
 		return nil, fmt.Errorf("connecting to browser at %s: %w", wsURL, err)
+	}
+
+	// When a proxy is configured, create a dedicated browser context with the proxy.
+	if proxyURL != "" {
+		res, err := proto.TargetCreateBrowserContext{
+			ProxyServer:     proxyURL,
+			DisposeOnDetach: true,
+		}.Call(b)
+		if err != nil {
+			return nil, fmt.Errorf("creating browser context with proxy: %w", err)
+		}
+		ctx := *b
+		ctx.BrowserContextID = res.BrowserContextID
+		b = &ctx
+		slog.Info("browser proxy configured", "proxy", proxyURL)
 	}
 
 	// Health check — open and close a blank page
@@ -52,6 +70,7 @@ func NewPool(_ int, pageTimeout time.Duration, controlURL string) (*Pool, error)
 	return &Pool{
 		browser:     b,
 		controlURL:  controlURL,
+		proxyURL:    proxyURL,
 		pageTimeout: pageTimeout,
 	}, nil
 }
@@ -75,6 +94,20 @@ func (p *Pool) reconnect() error {
 	if err := b.Connect(); err != nil {
 		return fmt.Errorf("reconnecting to browser at %s: %w", wsURL, err)
 	}
+
+	if p.proxyURL != "" {
+		res, err := proto.TargetCreateBrowserContext{
+			ProxyServer:     p.proxyURL,
+			DisposeOnDetach: true,
+		}.Call(b)
+		if err != nil {
+			return fmt.Errorf("recreating browser context with proxy: %w", err)
+		}
+		ctx := *b
+		ctx.BrowserContextID = res.BrowserContextID
+		b = &ctx
+	}
+
 	p.browser = b
 	return nil
 }
