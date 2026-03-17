@@ -131,11 +131,16 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 		jsExpressions := s.engine.CollectJSExpressions()
 		s.evalJS(navResult.Page, jsExpressions, jsResults)
 
-		// 404 probe via browser (separate page)
+		// 404 probe via browser (separate page) — also evaluate JS on the 404 page
 		detResponses := make([]models.ChainedResponse, len(responses))
 		copy(detResponses, responses)
-		if notFound, probeErr := s.probe404(ctx, baseURL); probeErr == nil {
+		if notFound, probeJS, probeErr := s.probe404(ctx, baseURL, jsExpressions); probeErr == nil {
 			detResponses = append(detResponses, *notFound)
+			for k, v := range probeJS {
+				if _, exists := jsResults[k]; !exists {
+					jsResults[k] = v
+				}
+			}
 		}
 
 		// Detections (parallel, handled by engine)
@@ -195,14 +200,15 @@ func (s *Scanner) evalJS(page *rod.Page, expressions []string, results map[strin
 	}
 }
 
-// probe404 navigates to a random non-existent path via the browser to capture the 404 response.
-func (s *Scanner) probe404(ctx context.Context, baseURL string) (*models.ChainedResponse, error) {
+// probe404 navigates to a random non-existent path via the browser to capture
+// the 404 response and evaluate JS expressions on the page.
+func (s *Scanner) probe404(ctx context.Context, baseURL string, jsExprs []string) (*models.ChainedResponse, map[string]string, error) {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	path := "/fp-" + hex.EncodeToString(b)
 	probeURL := strings.TrimRight(baseURL, "/") + path
 
-	return s.browserPool.NavigateAndCapture(ctx, probeURL)
+	return s.browserPool.NavigateCaptureAndEval(ctx, probeURL, jsExprs)
 }
 
 // Detectors returns the list of registered detectors (for /detections endpoint).
