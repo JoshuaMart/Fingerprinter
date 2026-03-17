@@ -75,7 +75,7 @@ func (d *MagentoDetector) Detect(ctx *models.DetectionContext) (*models.Detectio
 	}
 
 	// GraphQL endpoint check (expensive — only if no cheap check matched)
-	if checkMagentoGraphQL(ctx.HTTPClient, ctx.BaseURL) {
+	if !ctx.SkipPathChecks && checkMagentoGraphQL(ctx.HTTPClient, ctx.BaseURL) {
 		return detected, nil
 	}
 
