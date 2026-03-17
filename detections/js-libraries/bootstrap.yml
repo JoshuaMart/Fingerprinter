@@ -1,0 +1,7 @@
+name: Bootstrap
+category: JS Library
+website: https://getbootstrap.com
+checks:
+  js:
+    - expression: "bootstrap.Alert.VERSION"
+      version: true
