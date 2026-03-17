@@ -39,11 +39,24 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 	var total int
 	var version string
 
-	// Path checks — collect responses to feed into other checks (not counted as matches)
+	// Collect JS expressions to evaluate on path pages
+	jsExprs := make([]string, len(d.def.Checks.JS))
+	for i, js := range d.def.Checks.JS {
+		jsExprs[i] = js.Expression
+	}
+
+	// Path checks — collect responses and JS results to feed into other checks (not counted as matches)
 	var pathResponses []models.ChainedResponse
+	pathJSResults := make(map[string]string)
 	for _, check := range d.def.Checks.Paths {
-		if resp, ok := matchPath(ctx.BrowserPool, ctx.BaseURL, check); ok && resp != nil {
+		resp, jsResults, ok := matchPath(ctx.BrowserPool, ctx.BaseURL, check, jsExprs)
+		if ok && resp != nil {
 			pathResponses = append(pathResponses, *resp)
+			for k, v := range jsResults {
+				if _, exists := pathJSResults[k]; !exists {
+					pathJSResults[k] = v
+				}
+			}
 		}
 	}
 
@@ -102,13 +115,25 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 		}
 	}
 
-	// JS checks — require browser page, skip if unavailable
+	// JS checks — merge main page results with path page results
+	allJSResults := ctx.JSResults
+	if len(pathJSResults) > 0 {
+		allJSResults = make(map[string]string)
+		for k, v := range ctx.JSResults {
+			allJSResults[k] = v
+		}
+		for k, v := range pathJSResults {
+			if _, exists := allJSResults[k]; !exists {
+				allJSResults[k] = v
+			}
+		}
+	}
 	for _, check := range d.def.Checks.JS {
-		if ctx.BrowserPage == nil {
+		if ctx.BrowserPage == nil && len(allJSResults) == 0 {
 			continue
 		}
 		total++
-		if v, ok := matchJS(ctx, check); ok {
+		if v, ok := matchJSWithResults(allJSResults, ctx, check); ok {
 			matches++
 			if v != "" && version == "" {
 				version = v
@@ -202,25 +227,37 @@ func matchCookie(cookies map[string]string, cookieName string, check CookieCheck
 	return re.MatchString(cookies[cookieName])
 }
 
-func matchPath(navigator models.BrowserNavigator, baseURL string, check PathCheck) (*models.ChainedResponse, bool) {
+func matchPath(navigator models.BrowserNavigator, baseURL string, check PathCheck, jsExprs []string) (*models.ChainedResponse, map[string]string, bool) {
 	if navigator == nil {
-		return nil, false
+		return nil, nil, false
 	}
 	u := strings.TrimRight(baseURL, "/") + check.Path
+
+	if len(jsExprs) > 0 {
+		resp, jsResults, err := navigator.NavigateCaptureAndEval(context.Background(), u, jsExprs)
+		if err != nil {
+			return nil, nil, false
+		}
+		if resp.StatusCode == check.Status {
+			return resp, jsResults, true
+		}
+		return nil, nil, false
+	}
+
 	resp, err := navigator.NavigateAndCapture(context.Background(), u)
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	if resp.StatusCode == check.Status {
-		return resp, true
+		return resp, nil, true
 	}
-	return nil, false
+	return nil, nil, false
 }
 
-func matchJS(ctx *models.DetectionContext, check JSCheck) (string, bool) {
-	// Use pre-evaluated cached results (preferred — page may be closed)
-	if ctx.JSResults != nil {
-		if val, ok := ctx.JSResults[check.Expression]; ok {
+func matchJSWithResults(jsResults map[string]string, ctx *models.DetectionContext, check JSCheck) (string, bool) {
+	// Use pre-evaluated cached results (main page + path pages)
+	if jsResults != nil {
+		if val, ok := jsResults[check.Expression]; ok {
 			if check.Version {
 				return val, true
 			}
@@ -228,7 +265,7 @@ func matchJS(ctx *models.DetectionContext, check JSCheck) (string, bool) {
 		}
 	}
 
-	// Fallback to live evaluation
+	// Fallback to live evaluation on the main page
 	if ctx.BrowserPage == nil {
 		return "", false
 	}

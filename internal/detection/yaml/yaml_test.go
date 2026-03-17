@@ -17,7 +17,8 @@ import (
 
 // mockNavigator implements models.BrowserNavigator for testing path checks.
 type mockNavigator struct {
-	client *http.Client
+	client    *http.Client
+	jsResults map[string]string // simulated JS eval results for NavigateCaptureAndEval
 }
 
 func (m *mockNavigator) NavigateAndCapture(_ context.Context, url string) (*models.ChainedResponse, error) {
@@ -33,6 +34,31 @@ func (m *mockNavigator) NavigateAndCapture(_ context.Context, url string) (*mode
 		Body:       body,
 		RawHeaders: resp.Header,
 	}, nil
+}
+
+func (m *mockNavigator) NavigateCaptureAndEval(_ context.Context, url string, jsExprs []string) (*models.ChainedResponse, map[string]string, error) {
+	resp, err := m.client.Get(url) //nolint:noctx
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+
+	jsResults := make(map[string]string)
+	if m.jsResults != nil {
+		for _, expr := range jsExprs {
+			if val, ok := m.jsResults[expr]; ok {
+				jsResults[expr] = val
+			}
+		}
+	}
+
+	return &models.ChainedResponse{
+		URL:        url,
+		StatusCode: resp.StatusCode,
+		Body:       body,
+		RawHeaders: resp.Header,
+	}, jsResults, nil
 }
 
 // --- Loader tests ---
@@ -509,6 +535,54 @@ func TestCheckPathResponseNoBodyMatch(t *testing.T) {
 	}
 	if res.Detected {
 		t.Error("expected no detection: body check should not match path response")
+	}
+}
+
+func TestCheckPathResponseFeedsJSCheck(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/docs" {
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`<div class="swagger-ui">API docs</div>`))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	det := NewDetector(Definition{
+		Name:     "Swagger UI",
+		Category: "JS Library",
+		Checks: Checks{
+			Paths: []PathCheck{
+				{Path: "/api/docs", Status: 200},
+			},
+			Body: []BodyCheck{
+				{Pattern: "swagger-ui"},
+			},
+			JS: []JSCheck{
+				{Expression: "versions['swaggerUI']['version']", Version: true},
+			},
+		},
+	})
+
+	ctx := &models.DetectionContext{
+		Responses: []models.ChainedResponse{},
+		BrowserPool: &mockNavigator{
+			client:    srv.Client(),
+			jsResults: map[string]string{"versions['swaggerUI']['version']": "5.32.0"},
+		},
+		BaseURL: srv.URL,
+	}
+
+	res, err := det.Detect(ctx)
+	if err != nil {
+		t.Fatalf("Detect failed: %v", err)
+	}
+	if !res.Detected {
+		t.Error("expected detection")
+	}
+	if res.Version != "5.32.0" {
+		t.Errorf("expected version '5.32.0', got %q", res.Version)
 	}
 }
 

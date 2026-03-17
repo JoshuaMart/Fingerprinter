@@ -284,6 +284,95 @@ func (p *Pool) NavigateAndCapture(ctx context.Context, targetURL string) (*model
 	return resp, nil
 }
 
+// NavigateCaptureAndEval navigates to a URL, captures the response, waits for
+// network idle, and evaluates JS expressions on the page.
+func (p *Pool) NavigateCaptureAndEval(ctx context.Context, targetURL string, jsExprs []string) (*models.ChainedResponse, map[string]string, error) {
+	parsedURL, err := url.Parse(targetURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing URL %s: %w", targetURL, err)
+	}
+	targetHost := parsedURL.Hostname()
+
+	page, err := p.createPage()
+	if err != nil {
+		return nil, nil, fmt.Errorf("getting page: %w", err)
+	}
+	defer func() { _ = page.Close() }()
+
+	page = page.Context(ctx).Timeout(p.pageTimeout)
+
+	if err := (proto.NetworkEnable{}).Call(page); err != nil {
+		return nil, nil, fmt.Errorf("enabling network domain: %w", err)
+	}
+
+	capture := NewNetworkCapture(targetHost, targetURL)
+
+	go page.EachEvent(
+		func(e *proto.NetworkRequestWillBeSent) {
+			capture.HandleRequestWillBeSent(e)
+		},
+		func(e *proto.NetworkResponseReceived) {
+			capture.HandleResponseReceived(e)
+		},
+	)()
+
+	if err := page.Navigate(targetURL); err != nil {
+		return nil, nil, fmt.Errorf("navigating to %s: %w", targetURL, err)
+	}
+
+	if err := page.WaitLoad(); err != nil {
+		slog.Warn("page WaitLoad failed", "url", targetURL, "error", err)
+	}
+
+	// Wait for network to settle (scripts, XHR, etc.) before evaluating JS
+	wait := page.WaitRequestIdle(time.Second, nil, nil, nil)
+	wait()
+
+	chain := capture.Chain()
+	if len(chain) == 0 {
+		return nil, nil, fmt.Errorf("no network response captured for %s", targetURL)
+	}
+
+	last := chain[len(chain)-1]
+	flat := flattenHeaders(last.headers)
+
+	var body []byte
+	if last.requestID != "" {
+		bodyResult, err := proto.NetworkGetResponseBody{RequestID: last.requestID}.Call(page)
+		if err == nil {
+			body = []byte(bodyResult.Body)
+		}
+	}
+
+	resp := &models.ChainedResponse{
+		URL:          last.url,
+		StatusCode:   last.statusCode,
+		Headers:      flat,
+		RawHeaders:   last.headers,
+		Body:         body,
+		ResponseSize: len(body),
+	}
+
+	if isHTMLContentType(flat["Content-Type"]) {
+		resp.Title = parseTitle(body)
+	}
+
+	// Evaluate JS expressions on the navigated page
+	jsResults := make(map[string]string, len(jsExprs))
+	for _, expr := range jsExprs {
+		result, err := page.Eval("() => { try { return " + expr + " } catch(e) { return undefined } }")
+		if err != nil {
+			continue
+		}
+		if result == nil || result.Value.Nil() {
+			continue
+		}
+		jsResults[expr] = result.Value.String()
+	}
+
+	return resp, jsResults, nil
+}
+
 // buildChain converts captured network events into []models.ChainedResponse.
 // It also fetches the body of the final response.
 func (p *Pool) buildChain(page *rod.Page, capture *NetworkCapture) ([]models.ChainedResponse, error) {

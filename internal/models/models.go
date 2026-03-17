@@ -60,6 +60,7 @@ type ScanMetadata struct {
 // BrowserNavigator allows detectors to navigate via the browser pool.
 type BrowserNavigator interface {
 	NavigateAndCapture(ctx context.Context, url string) (*ChainedResponse, error)
+	NavigateCaptureAndEval(ctx context.Context, url string, jsExprs []string) (*ChainedResponse, map[string]string, error)
 }
 
 // DetectionContext provides all data available to a detector.
