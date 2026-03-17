@@ -97,7 +97,8 @@ curl -X POST http://localhost:3001/scan \
     "url": "https://example.com",
     "options": {
       "timeout_seconds": 30,
-      "max_redirects": 10
+      "max_redirects": 10,
+      "skip_404": false
     }
   }'
 ```
@@ -184,7 +185,7 @@ Use single quotes for regex patterns to avoid YAML escaping issues.
 
 ```yaml
 name: Technology Name
-category: Category        # e.g. Language, CMS, Framework, CDN, Analytics...
+category: Category                 # e.g. Language, CMS, Framework, CDN, Analytics...
 website: https://example.com
 checks:
   headers:
@@ -207,7 +208,7 @@ checks:
     another_cookie:
       pattern: 'regex on value'    # optional, applied on the same value as pattern
 
-  paths:
+  paths:                           # responses feed into body/headers/cookies/js checks
     - path: '/specific-path'
       status: 200                  # expected HTTP status code
 
@@ -223,12 +224,12 @@ checks:
 
 | Check | Description | Version extraction |
 |---|---|---|
-| `headers` | Regex on HTTP response header value | `version` regex on same value |
+| `headers` | Regex on HTTP response header value (no pattern = presence check) | `version` regex on same value |
 | `body` | Regex on response body | `version` regex on same body match |
 | `meta` | Regex on `<meta>` tag content attribute | `version` regex on content value |
 | `cookies` | Cookie name existence, optional value regex | No |
-| `paths` | Navigate to path via browser, check status code | No |
-| `js` | JS expression evaluated in browser context | If `version: true`, expression result is the version |
+| `paths` | Navigate to path via browser, check status code. Response is added to the pool for body/headers/cookies/js checks | No |
+| `js` | JS expression evaluated in browser context (main page + path pages) | If `version: true`, expression result is the version |
 | `favicon_hash` | mmh3 hash of the site favicon | No |
 
 #### Example: PHP
