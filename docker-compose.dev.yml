@@ -12,7 +12,7 @@ services:
       start_period: 10s
 
   core:
-    image: ghcr.io/joshuamart/fingerprinter:latest
+    build: .
     ports:
       - "3001:3001"
     depends_on:
