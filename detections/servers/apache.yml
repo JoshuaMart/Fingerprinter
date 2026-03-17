@@ -1,0 +1,8 @@
+name: Apache
+category: Server
+website: https://httpd.apache.org
+checks:
+  headers:
+    server:
+      pattern: 'Apache'
+      version: '(\d+\.\d+\.?\d*)'
