@@ -229,7 +229,7 @@ checks:
 | `cookies` | Cookie name existence, optional value regex | No |
 | `paths` | Navigate to path via browser, check status code | No |
 | `js` | JS expression evaluated in browser context | If `version: true`, expression result is the version |
-| `favicon_hash` | Shodan-compatible mmh3 hash of the site favicon | No |
+| `favicon_hash` | mmh3 hash of the site favicon | No |
 
 #### Example: PHP
 
