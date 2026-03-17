@@ -5,3 +5,6 @@ checks:
   js:
     - expression: "bootstrap.Alert.VERSION"
       version: true
+    - expression: "jQuery.fn.alert.Constructor.VERSION"
+      version: true
+    - expression: "jQuery.fn.alert.Constructor"
