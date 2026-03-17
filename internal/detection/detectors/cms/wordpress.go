@@ -1,0 +1,176 @@
+package cms
+
+import (
+	"context"
+	"regexp"
+	"strings"
+
+	"github.com/JoshuaMart/fingerprinter/internal/chain"
+	"github.com/JoshuaMart/fingerprinter/internal/models"
+)
+
+var (
+	wpHeaderVersionRe = regexp.MustCompile(`([\d.]+)`)
+	wpLinkAPIRe       = regexp.MustCompile(`rel="https://api\.w\.org/"`)
+	wpPingbackRe      = regexp.MustCompile(`/xmlrpc\.php`)
+	wpPoweredByRe     = regexp.MustCompile(`(?i)WordPress`)
+
+	wpBodyPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`<link[^>]+wp-(content|includes)/`),
+		regexp.MustCompile(`<script[^>]+wp-(content|includes)/`),
+		regexp.MustCompile(`<script[^>]+wp-embed\.min\.js`),
+		regexp.MustCompile(`class="[^"]*wp-block-`),
+	}
+	wpEmbedVersionRe = regexp.MustCompile(`wp-embed\.min\.js\?ver=([\d.]+)`)
+
+	wpMetaGeneratorRe = regexp.MustCompile(`(?i)WordPress`)
+	wpMetaVersionRe   = regexp.MustCompile(`([\d.]+)`)
+
+	wpFeedVersionRe = regexp.MustCompile(`version="([\d.]+)"`)
+	wpOPMLVersionRe = regexp.MustCompile(`WordPress/([\d.]+)`)
+)
+
+var wpJSExpressions = []string{
+	`typeof wp !== 'undefined' && typeof wp.ajax !== 'undefined'`,
+	`typeof wp !== 'undefined' && typeof wp.receiveEmbedMessage !== 'undefined'`,
+	`typeof wp_username !== 'undefined'`,
+}
+
+var wpCookieNames = []string{
+	"wordpress_logged_in",
+	"wp-settings",
+	"wp_woocommerce_session",
+}
+
+// WordPressDetector detects WordPress CMS.
+type WordPressDetector struct{}
+
+func (d *WordPressDetector) Name() string     { return "WordPress" }
+func (d *WordPressDetector) Category() string { return "CMS" }
+
+// JSExpressions returns JS expressions to pre-evaluate in the browser.
+func (d *WordPressDetector) JSExpressions() []string { return wpJSExpressions }
+
+func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.DetectionResult, error) {
+	detected := false
+	version := ""
+	var evidence []string
+
+	// 1. Headers
+	for _, resp := range ctx.Responses {
+		if v := resp.RawHeaders.Get("x-wordpress-version"); v != "" {
+			if m := wpHeaderVersionRe.FindStringSubmatch(v); m != nil {
+				version = m[1]
+			}
+			detected = true
+			evidence = appendUnique(evidence, "headers: x-wordpress-version")
+		}
+		if v := resp.RawHeaders.Get("link"); v != "" && wpLinkAPIRe.MatchString(v) {
+			detected = true
+			evidence = appendUnique(evidence, "headers: link api.w.org")
+		}
+		if v := resp.RawHeaders.Get("x-pingback"); v != "" && wpPingbackRe.MatchString(v) {
+			detected = true
+			evidence = appendUnique(evidence, "headers: x-pingback")
+		}
+		if v := resp.RawHeaders.Get("x-powered-by"); v != "" && wpPoweredByRe.MatchString(v) {
+			detected = true
+			evidence = appendUnique(evidence, "headers: x-powered-by")
+		}
+	}
+
+	// 2. Body
+	for _, resp := range ctx.Responses {
+		body := resp.Body
+		for _, re := range wpBodyPatterns {
+			if re.Match(body) {
+				detected = true
+				evidence = appendUnique(evidence, "body: wp-content")
+			}
+		}
+		if version == "" {
+			if m := wpEmbedVersionRe.FindSubmatch(body); m != nil {
+				version = string(m[1])
+				detected = true
+				evidence = appendUnique(evidence, "body: wp-embed version")
+			}
+		}
+	}
+
+	// 3. Meta (generator)
+	if ctx.Document != nil {
+		metas := chain.ExtractMeta(ctx.Document)
+		if gen, ok := metas["generator"]; ok && wpMetaGeneratorRe.MatchString(gen) {
+			detected = true
+			evidence = appendUnique(evidence, "meta: generator")
+			if version == "" {
+				if m := wpMetaVersionRe.FindStringSubmatch(gen); m != nil {
+					version = m[1]
+				}
+			}
+		}
+	}
+
+	// 4. Cookies (prefix match — e.g. wp-settings-1 matches wp-settings)
+	cookies := chain.ExtractCookies(ctx.Responses)
+	for cookieName := range cookies {
+		for _, prefix := range wpCookieNames {
+			if strings.HasPrefix(cookieName, prefix) {
+				detected = true
+				evidence = appendUnique(evidence, "cookies: "+prefix)
+			}
+		}
+	}
+
+	// 5. JS (pre-evaluated)
+	for _, expr := range wpJSExpressions {
+		if v, ok := ctx.JSResults[expr]; ok && v != "" && v != "false" && v != "undefined" && v != "null" {
+			detected = true
+			evidence = appendUnique(evidence, "js: wp object")
+		}
+	}
+
+	// 6. Conditional path probes (only if detected but no version)
+	if detected && version == "" && ctx.BrowserPool != nil && ctx.BaseURL != "" {
+		base := strings.TrimRight(ctx.BaseURL, "/")
+
+		// Try feed=atom
+		resp, err := ctx.BrowserPool.NavigateAndCapture(context.Background(), base+"/?feed=atom")
+		if err == nil && resp.StatusCode == 200 {
+			if m := wpFeedVersionRe.FindSubmatch(resp.Body); m != nil {
+				version = string(m[1])
+				evidence = appendUnique(evidence, "probe: feed=atom")
+			}
+		}
+
+		// If still no version, try wp-links-opml
+		if version == "" {
+			resp, err = ctx.BrowserPool.NavigateAndCapture(context.Background(), base+"/wp-links-opml.php")
+			if err == nil && resp.StatusCode == 200 {
+				if m := wpOPMLVersionRe.FindSubmatch(resp.Body); m != nil {
+					version = string(m[1])
+					evidence = appendUnique(evidence, "probe: wp-links-opml")
+				}
+			}
+		}
+	}
+
+	if !detected {
+		return &models.DetectionResult{Detected: false}, nil
+	}
+
+	return &models.DetectionResult{
+		Detected: true,
+		Version:  version,
+		Evidence: strings.Join(evidence, ", "),
+	}, nil
+}
+
+func appendUnique(slice []string, val string) []string {
+	for _, s := range slice {
+		if s == val {
+			return slice
+		}
+	}
+	return append(slice, val)
+}

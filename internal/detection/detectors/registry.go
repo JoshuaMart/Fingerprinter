@@ -9,5 +9,6 @@ import (
 func All() []models.Detector {
 	return []models.Detector{
 		&cms.MagentoDetector{},
+		&cms.WordPressDetector{},
 	}
 }
