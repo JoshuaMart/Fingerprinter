@@ -1,0 +1,9 @@
+name: Nginx
+category: Server
+website: https://nginx.org
+checks:
+  headers:
+    server:
+      pattern: 'nginx'
+      version: '(\d+\.\d+\.?\d*)'
+    x-fastcgi-cache:
