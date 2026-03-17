@@ -134,11 +134,13 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 		// 404 probe via browser (separate page) — also evaluate JS on the 404 page
 		detResponses := make([]models.ChainedResponse, len(responses))
 		copy(detResponses, responses)
-		if notFound, probeJS, probeErr := s.probe404(ctx, baseURL, jsExpressions); probeErr == nil {
-			detResponses = append(detResponses, *notFound)
-			for k, v := range probeJS {
-				if _, exists := jsResults[k]; !exists {
-					jsResults[k] = v
+		if req.Options == nil || !req.Options.Skip404 {
+			if notFound, probeJS, probeErr := s.probe404(ctx, baseURL, jsExpressions); probeErr == nil {
+				detResponses = append(detResponses, *notFound)
+				for k, v := range probeJS {
+					if _, exists := jsResults[k]; !exists {
+						jsResults[k] = v
+					}
 				}
 			}
 		}

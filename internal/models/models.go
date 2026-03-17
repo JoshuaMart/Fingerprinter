@@ -17,8 +17,9 @@ type ScanRequest struct {
 
 // ScanOptions configures the scan behavior.
 type ScanOptions struct {
-	MaxRedirects   int `json:"max_redirects,omitempty"`
-	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+	MaxRedirects   int  `json:"max_redirects,omitempty"`
+	TimeoutSeconds int  `json:"timeout_seconds,omitempty"`
+	Skip404        bool `json:"skip_404,omitempty"`
 }
 
 // ScanResult is the complete output of a scan.
