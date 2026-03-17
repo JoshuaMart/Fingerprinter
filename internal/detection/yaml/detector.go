@@ -166,14 +166,18 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 }
 
 func matchHeaders(responses []models.ChainedResponse, headerName string, check HeaderCheck) (string, bool) {
-	re, err := regexp.Compile(check.Pattern)
-	if err != nil {
-		return "", false
-	}
 	for _, resp := range responses {
 		value := resp.RawHeaders.Get(headerName)
 		if value == "" {
 			continue
+		}
+		// No pattern = presence check only
+		if check.Pattern == "" {
+			return "", true
+		}
+		re, err := regexp.Compile(check.Pattern)
+		if err != nil {
+			return "", false
 		}
 		if re.MatchString(value) {
 			return extractVersion(value, check.Version), true
