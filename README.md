@@ -1,8 +1,14 @@
-# Fingerprinter
+![Image](https://github.com/user-attachments/assets/99b1c5ac-cfc7-4fb7-b250-f76cdd58d991)
 
-Open-source web technology detection engine with a built-in REST API.
+<p align="center">
+    <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-green.svg"></a>
+    <img src="https://img.shields.io/badge/Docker-Supported-blue.svg">
+    <img src="https://img.shields.io/badge/Golang-1.26-blue.svg">
+</p>
 
-Fingerprinter scans a URL using a headless browser, captures the full redirect chain via CDP network events, analyzes HTTP headers, rendered HTML, cookies, meta tags, JavaScript globals, and returns a list of detected technologies with version information.
+Web technology detection engine with a built-in REST API.
+
+Scan a URL using a headless browser, captures the full redirect chain via CDP network events, analyzes HTTP headers, rendered HTML, cookies, meta tags, JavaScript globals, and returns a list of detected technologies with version information.
 
 ## Features
 
