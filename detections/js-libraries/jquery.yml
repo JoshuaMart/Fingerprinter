@@ -3,5 +3,7 @@ category: JS Library
 website: https://jquery.com
 checks:
   js:
-    - expression: "jQuery.fn.jquery"
+    - expression: "$.fn.jquery"
+      version: true
+    - expression: "$().jquery"
       version: true
