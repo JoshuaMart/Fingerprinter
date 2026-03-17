@@ -1,9 +1,9 @@
 ![Image](https://github.com/user-attachments/assets/99b1c5ac-cfc7-4fb7-b250-f76cdd58d991)
 
 <p align="center">
-    <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-green.svg"></a>
-    <img src="https://img.shields.io/badge/Docker-Supported-blue.svg">
-    <img src="https://img.shields.io/badge/Golang-1.26-blue.svg">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green"></a>
+  <img src="https://img.shields.io/badge/docker-supported-blue?logo=docker">
+  <img src="https://img.shields.io/badge/golang-1.26-blue?logo=go">
 </p>
 
 Web technology detection engine with a built-in REST API.
