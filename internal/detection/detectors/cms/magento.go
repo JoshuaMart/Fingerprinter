@@ -45,12 +45,13 @@ func (d *MagentoDetector) Category() string { return "E-commerce" }
 
 func (d *MagentoDetector) Detect(ctx *models.DetectionContext) (*models.DetectionResult, error) {
 	detected := &models.DetectionResult{Detected: true}
+	cheapMatch := false
 
 	// Header checks (cheap)
 	for headerName, re := range magentoHeaderPatterns {
 		for _, resp := range ctx.Responses {
 			if value := resp.RawHeaders.Get(headerName); value != "" && re.MatchString(value) {
-				return detected, nil
+				cheapMatch = true
 			}
 		}
 	}
@@ -59,17 +60,21 @@ func (d *MagentoDetector) Detect(ctx *models.DetectionContext) (*models.Detectio
 	for _, re := range magentoBodyPatterns {
 		for _, resp := range ctx.Responses {
 			if re.Match(resp.Body) {
-				return detected, nil
+				cheapMatch = true
 			}
 		}
 	}
 
 	// Meta content check (cheap)
 	if ctx.Document != nil && matchMagentoMeta(ctx.Document) {
+		cheapMatch = true
+	}
+
+	if cheapMatch {
 		return detected, nil
 	}
 
-	// GraphQL endpoint check (expensive — last)
+	// GraphQL endpoint check (expensive — only if no cheap check matched)
 	if checkMagentoGraphQL(ctx.HTTPClient, ctx.BaseURL) {
 		return detected, nil
 	}
