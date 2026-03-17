@@ -31,6 +31,7 @@ func (m *mockNavigator) NavigateAndCapture(_ context.Context, url string) (*mode
 		URL:        url,
 		StatusCode: resp.StatusCode,
 		Body:       body,
+		RawHeaders: resp.Header,
 	}, nil
 }
 
@@ -358,6 +359,7 @@ func TestCheckPaths(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/wp-login.php" {
 			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`<form id="loginform">`))
 			return
 		}
 		w.WriteHeader(404)
@@ -370,6 +372,9 @@ func TestCheckPaths(t *testing.T) {
 		Checks: Checks{
 			Paths: []PathCheck{
 				{Path: "/wp-login.php", Status: 200},
+			},
+			Body: []BodyCheck{
+				{Pattern: "loginform"},
 			},
 		},
 	})
@@ -385,13 +390,14 @@ func TestCheckPaths(t *testing.T) {
 		t.Fatalf("Detect failed: %v", err)
 	}
 	if !res.Detected {
-		t.Error("expected detection")
+		t.Error("expected detection: body check should match against path response")
 	}
 }
 
 func TestCheckPathsNoMatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
+		_, _ = w.Write([]byte(`Not found`))
 	}))
 	defer srv.Close()
 
@@ -401,6 +407,9 @@ func TestCheckPathsNoMatch(t *testing.T) {
 		Checks: Checks{
 			Paths: []PathCheck{
 				{Path: "/wp-login.php", Status: 200},
+			},
+			Body: []BodyCheck{
+				{Pattern: "loginform"},
 			},
 		},
 	})
@@ -417,6 +426,89 @@ func TestCheckPathsNoMatch(t *testing.T) {
 	}
 	if res.Detected {
 		t.Error("expected no detection")
+	}
+}
+
+// --- Path response feeds other checks ---
+
+func TestCheckPathResponseFeedsBodyCheck(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/docs" {
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`<div class="swagger-ui">API docs</div>`))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	det := NewDetector(Definition{
+		Name:     "Swagger UI",
+		Category: "JS Library",
+		Checks: Checks{
+			Paths: []PathCheck{
+				{Path: "/api/docs", Status: 200},
+			},
+			Body: []BodyCheck{
+				{Pattern: "swagger-ui"},
+			},
+		},
+	})
+
+	ctx := &models.DetectionContext{
+		Responses:   []models.ChainedResponse{},
+		BrowserPool: &mockNavigator{client: srv.Client()},
+		BaseURL:     srv.URL,
+	}
+
+	res, err := det.Detect(ctx)
+	if err != nil {
+		t.Fatalf("Detect failed: %v", err)
+	}
+	if !res.Detected {
+		t.Error("expected detection: body check should match against path response")
+	}
+	if res.Evidence != "1/1 checks matched" {
+		t.Errorf("expected 1/1 checks matched, got %q", res.Evidence)
+	}
+}
+
+func TestCheckPathResponseNoBodyMatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/docs" {
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`<div>Some other content</div>`))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	det := NewDetector(Definition{
+		Name:     "Swagger UI",
+		Category: "JS Library",
+		Checks: Checks{
+			Paths: []PathCheck{
+				{Path: "/api/docs", Status: 200},
+			},
+			Body: []BodyCheck{
+				{Pattern: "swagger-ui"},
+			},
+		},
+	})
+
+	ctx := &models.DetectionContext{
+		Responses:   []models.ChainedResponse{},
+		BrowserPool: &mockNavigator{client: srv.Client()},
+		BaseURL:     srv.URL,
+	}
+
+	res, err := det.Detect(ctx)
+	if err != nil {
+		t.Fatalf("Detect failed: %v", err)
+	}
+	if res.Detected {
+		t.Error("expected no detection: body check should not match path response")
 	}
 }
 

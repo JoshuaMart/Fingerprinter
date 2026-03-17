@@ -39,10 +39,26 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 	var total int
 	var version string
 
-	// Headers checks — run against all responses in the chain
+	// Path checks — collect responses to feed into other checks (not counted as matches)
+	var pathResponses []models.ChainedResponse
+	for _, check := range d.def.Checks.Paths {
+		if resp, ok := matchPath(ctx.BrowserPool, ctx.BaseURL, check); ok && resp != nil {
+			pathResponses = append(pathResponses, *resp)
+		}
+	}
+
+	// Build combined response pool: initial responses + path responses
+	allResponses := ctx.Responses
+	if len(pathResponses) > 0 {
+		allResponses = make([]models.ChainedResponse, 0, len(ctx.Responses)+len(pathResponses))
+		allResponses = append(allResponses, ctx.Responses...)
+		allResponses = append(allResponses, pathResponses...)
+	}
+
+	// Headers checks — run against all responses
 	for headerName, check := range d.def.Checks.Headers {
 		total++
-		if v, ok := matchHeaders(ctx.Responses, headerName, check); ok {
+		if v, ok := matchHeaders(allResponses, headerName, check); ok {
 			matches++
 			if v != "" && version == "" {
 				version = v
@@ -50,10 +66,10 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 		}
 	}
 
-	// Body checks — run against all responses in the chain
+	// Body checks — run against all responses
 	for _, check := range d.def.Checks.Body {
 		total++
-		if v, ok := matchBody(ctx.Responses, check); ok {
+		if v, ok := matchBody(allResponses, check); ok {
 			matches++
 			if v != "" && version == "" {
 				version = v
@@ -75,22 +91,14 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 		}
 	}
 
-	// Cookie checks — run against all responses in the chain
+	// Cookie checks — run against all responses
 	if len(d.def.Checks.Cookies) > 0 {
-		cookies := chain.ExtractCookies(ctx.Responses)
+		cookies := chain.ExtractCookies(allResponses)
 		for cookieName, check := range d.def.Checks.Cookies {
 			total++
 			if matchCookie(cookies, cookieName, check) {
 				matches++
 			}
-		}
-	}
-
-	// Path checks — navigate via browser pool
-	for _, check := range d.def.Checks.Paths {
-		total++
-		if matchPath(ctx.BrowserPool, ctx.BaseURL, check) {
-			matches++
 		}
 	}
 
@@ -194,16 +202,19 @@ func matchCookie(cookies map[string]string, cookieName string, check CookieCheck
 	return re.MatchString(cookies[cookieName])
 }
 
-func matchPath(navigator models.BrowserNavigator, baseURL string, check PathCheck) bool {
+func matchPath(navigator models.BrowserNavigator, baseURL string, check PathCheck) (*models.ChainedResponse, bool) {
 	if navigator == nil {
-		return false
+		return nil, false
 	}
 	u := strings.TrimRight(baseURL, "/") + check.Path
 	resp, err := navigator.NavigateAndCapture(context.Background(), u)
 	if err != nil {
-		return false
+		return nil, false
 	}
-	return resp.StatusCode == check.Status
+	if resp.StatusCode == check.Status {
+		return resp, true
+	}
+	return nil, false
 }
 
 func matchJS(ctx *models.DetectionContext, check JSCheck) (string, bool) {
