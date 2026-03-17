@@ -188,23 +188,24 @@ category: Category        # e.g. Language, CMS, Framework, CDN, Analytics...
 website: https://example.com
 checks:
   headers:
-    header-name:
+    header_name:                   # presence check only (no pattern = just check existence)
+    another_header:
       pattern: 'regex'
       version: '(capture group)'   # optional, applied on the same value as pattern
 
   body:
     - pattern: 'regex in body'
-      version: '(\d+\.\d+)'       # optional
+      version: '(\d+\.\d+)'        # optional, applied on the same value as pattern
 
   meta:
     meta-name:                     # matches <meta name="..." content="...">
       pattern: 'regex'
-      version: '(\d+)'            # optional
+      version: '(\d+)'             # optional, applied on the same value as pattern
 
   cookies:
     cookie_name:                   # presence check only (no pattern = just check existence)
     another_cookie:
-      pattern: 'regex on value'    # optional value match
+      pattern: 'regex on value'    # optional, applied on the same value as pattern
 
   paths:
     - path: '/specific-path'
@@ -214,7 +215,7 @@ checks:
     - expression: 'window.jQuery'  # JS expression evaluated in browser context
       version: false               # if true, the expression return value is used as version
 
-  favicon_hash:                    # Shodan-compatible mmh3 hash of the favicon
+  favicon_hash:                    # mmh3 hash of the favicon
     - 1099097618
 ```
 
