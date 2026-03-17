@@ -63,7 +63,7 @@ func New(cfg *config.Config) (*Scanner, error) {
 	}
 
 	// Start browser pool (mandatory)
-	pool, err := browser.NewPool(cfg.Browser.PoolSize, cfg.Browser.PageTimeout, cfg.Browser.ControlURL, cfg.Scanner.Proxy, cfg.Scanner.Headers)
+	pool, err := browser.NewPool(cfg.Browser.PoolSize, cfg.Browser.PageTimeout, cfg.Browser.ControlURL, cfg.Scanner.Proxy, cfg.Scanner.UserHeaders)
 	if err != nil {
 		return nil, fmt.Errorf("starting browser pool: %w", err)
 	}

@@ -25,6 +25,7 @@ type ScannerConfig struct {
 	MaxRedirects    int               `yaml:"max_redirects"`
 	RequestTimeout  time.Duration     `yaml:"request_timeout"`
 	Headers         map[string]string `yaml:"headers"`
+	UserHeaders     map[string]string `yaml:"-"`
 	ConcurrentScans int               `yaml:"concurrent_scans"`
 	Proxy           string            `yaml:"proxy"`
 }
@@ -68,6 +69,15 @@ func defaults() *Config {
 func Load(path string) (*Config, error) {
 	cfg := defaults()
 
+	// Track which headers are explicitly set by the user (YAML + env).
+	// The browser should keep its native User-Agent unless the user overrides it,
+	// while the HTTP client always uses the default Fingerprinter UA.
+	var userCfg struct {
+		Scanner struct {
+			Headers map[string]string `yaml:"headers"`
+		} `yaml:"scanner"`
+	}
+
 	if path != "" {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -76,7 +86,11 @@ func Load(path string) (*Config, error) {
 		if err := yaml.Unmarshal(data, cfg); err != nil {
 			return nil, fmt.Errorf("parsing config file: %w", err)
 		}
+		// Parse again into a clean struct to isolate user-defined headers.
+		_ = yaml.Unmarshal(data, &userCfg)
 	}
+
+	cfg.Scanner.UserHeaders = copyHeaders(userCfg.Scanner.Headers)
 
 	loadEnvOverrides(cfg)
 
@@ -98,6 +112,10 @@ func loadEnvOverrides(cfg *Config) {
 			cfg.Scanner.Headers = make(map[string]string)
 		}
 		cfg.Scanner.Headers["User-Agent"] = v
+		if cfg.Scanner.UserHeaders == nil {
+			cfg.Scanner.UserHeaders = make(map[string]string)
+		}
+		cfg.Scanner.UserHeaders["User-Agent"] = v
 	}
 	if v := os.Getenv("FINGERPRINTER_BROWSER_CONTROL_URL"); v != "" {
 		cfg.Browser.ControlURL = v
@@ -108,6 +126,17 @@ func loadEnvOverrides(cfg *Config) {
 	if v := os.Getenv("FINGERPRINTER_SCANNER_PROXY"); v != "" {
 		cfg.Scanner.Proxy = v
 	}
+}
+
+func copyHeaders(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 func validate(cfg *Config) error {

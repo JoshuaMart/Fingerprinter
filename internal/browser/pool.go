@@ -137,15 +137,27 @@ func (p *Pool) createPage() (*rod.Page, error) {
 }
 
 // setExtraHeaders applies configured headers to the page via CDP.
+// User-Agent requires a dedicated CDP call (Network.setUserAgentOverride).
 func (p *Pool) setExtraHeaders(page *rod.Page) error {
 	if len(p.headers) == 0 {
 		return nil
 	}
+
 	hdrs := make(proto.NetworkHeaders)
 	for k, v := range p.headers {
+		if strings.EqualFold(k, "User-Agent") {
+			if err := (proto.NetworkSetUserAgentOverride{UserAgent: v}).Call(page); err != nil {
+				return fmt.Errorf("setting user-agent override: %w", err)
+			}
+			continue
+		}
 		hdrs[k] = gson.New(v)
 	}
-	return proto.NetworkSetExtraHTTPHeaders{Headers: hdrs}.Call(page)
+
+	if len(hdrs) > 0 {
+		return proto.NetworkSetExtraHTTPHeaders{Headers: hdrs}.Call(page)
+	}
+	return nil
 }
 
 // NavigateResult holds the output of a browser navigation.
