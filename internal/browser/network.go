@@ -11,11 +11,12 @@ import (
 )
 
 // NetworkCapture collects CDP Network events to reconstruct the redirect chain
-// and track external hosts.
+// and track external hosts and WebSocket connections.
 type NetworkCapture struct {
 	mu            sync.Mutex
 	targetHost    string
 	externalHosts map[string]struct{}
+	webSockets    map[string]struct{}
 
 	mainRequestID proto.NetworkRequestID
 	initialized   bool
@@ -35,6 +36,7 @@ func NewNetworkCapture(targetHost, originalURL string) *NetworkCapture {
 	return &NetworkCapture{
 		targetHost:    targetHost,
 		externalHosts: make(map[string]struct{}),
+		webSockets:    make(map[string]struct{}),
 	}
 }
 
@@ -98,6 +100,28 @@ func (nc *NetworkCapture) Chain() []capturedResponse {
 		chain = append(chain, *nc.finalResponse)
 	}
 	return chain
+}
+
+// HandleWebSocketCreated processes a Network.webSocketCreated event.
+func (nc *NetworkCapture) HandleWebSocketCreated(e *proto.NetworkWebSocketCreated) {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+
+	if e.URL != "" {
+		nc.webSockets[e.URL] = struct{}{}
+	}
+}
+
+// WebSockets returns sorted unique WebSocket URLs.
+func (nc *NetworkCapture) WebSockets() []string {
+	nc.mu.Lock()
+	defer nc.mu.Unlock()
+	urls := make([]string, 0, len(nc.webSockets))
+	for u := range nc.webSockets {
+		urls = append(urls, u)
+	}
+	sort.Strings(urls)
+	return urls
 }
 
 // ExternalHosts returns sorted unique external hostnames.

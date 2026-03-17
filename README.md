@@ -13,7 +13,7 @@ Scan a URL using a headless browser, capture the full redirect chain via CDP net
 ## Pipeline
 
 ```
-1. Browser navigate — open URL in Chrome, capture redirect chain + external hosts via CDP
+1. Browser navigate — open URL in Chrome, capture redirect chain + external hosts + WebSockets via CDP
         |
         v
 2. DOM parsing — parse rendered HTML (post-JS) with goquery
@@ -172,6 +172,7 @@ curl -X POST http://localhost:3001/scan \
     "favicon": "https://example.com/favicon.ico"
   },
   "external_hosts": [],
+  "web_sockets": [],
   "scanned_at": "2026-03-13T12:00:00Z"
 }
 ```

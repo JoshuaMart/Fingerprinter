@@ -171,6 +171,7 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 			Cookies:       cookies,
 			Metadata:      scanMeta,
 			ExternalHosts: navResult.ExternalHosts,
+			WebSockets:    navResult.WebSockets,
 			ScannedAt:     time.Now().UTC(),
 		}
 

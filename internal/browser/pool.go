@@ -164,6 +164,7 @@ func (p *Pool) setExtraHeaders(page *rod.Page) error {
 type NavigateResult struct {
 	Page          *rod.Page
 	ExternalHosts []string
+	WebSockets    []string
 	Chain         []models.ChainedResponse
 }
 
@@ -199,6 +200,9 @@ func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *N
 		},
 		func(e *proto.NetworkResponseReceived) {
 			capture.HandleResponseReceived(e)
+		},
+		func(e *proto.NetworkWebSocketCreated) {
+			capture.HandleWebSocketCreated(e)
 		},
 	)()
 
@@ -236,6 +240,7 @@ func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *N
 	result := &NavigateResult{
 		Page:          page,
 		ExternalHosts: capture.ExternalHosts(),
+		WebSockets:    capture.WebSockets(),
 		Chain:         chainResponses,
 	}
 
@@ -272,6 +277,9 @@ func (p *Pool) NavigateAndCapture(ctx context.Context, targetURL string) (*model
 		},
 		func(e *proto.NetworkResponseReceived) {
 			capture.HandleResponseReceived(e)
+		},
+		func(e *proto.NetworkWebSocketCreated) {
+			capture.HandleWebSocketCreated(e)
 		},
 	)()
 
@@ -345,6 +353,9 @@ func (p *Pool) NavigateCaptureAndEval(ctx context.Context, targetURL string, jsE
 		},
 		func(e *proto.NetworkResponseReceived) {
 			capture.HandleResponseReceived(e)
+		},
+		func(e *proto.NetworkWebSocketCreated) {
+			capture.HandleWebSocketCreated(e)
 		},
 	)()
 

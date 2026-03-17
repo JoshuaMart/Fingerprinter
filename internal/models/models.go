@@ -30,6 +30,7 @@ type ScanResult struct {
 	Cookies       map[string]string `json:"cookies"`
 	Metadata      *ScanMetadata     `json:"metadata"`
 	ExternalHosts []string          `json:"external_hosts"`
+	WebSockets    []string          `json:"web_sockets"`
 	ScannedAt     time.Time         `json:"scanned_at"`
 }
 
