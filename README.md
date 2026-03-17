@@ -8,18 +8,30 @@
 
 Web technology detection engine with a built-in REST API.
 
-Scan a URL using a headless browser, captures the full redirect chain via CDP network events, analyzes HTTP headers, rendered HTML, cookies, meta tags, JavaScript globals, and returns a list of detected technologies with version information.
+Scan a URL using a headless browser, capture the full redirect chain via CDP network events, analyze HTTP headers, rendered HTML, cookies, meta tags, JavaScript globals, and return detected technologies with version information.
 
-## Features
+## Pipeline
 
-- Browser-based redirect chain capture via CDP Network events
-- YAML-based detection system (headers, body, meta, cookies, paths, JS, favicon hash)
-- Complex Go-based detectors for advanced detection logic
-- Headless browser via Chrome (remote CDP) — JS evaluation, rendered DOM analysis
-- Concurrent scan limiting via semaphore
-- Shodan-compatible favicon mmh3 hashing
+```
+1. Browser navigate — open URL in Chrome, capture redirect chain + external hosts via CDP
+        |
+        v
+2. DOM parsing — parse rendered HTML (post-JS) with goquery
+        |
+        v
+3. 404 probe — navigate to random path, capture error page response + JS eval
+        |
+        v
+4. Detections — run all YAML + Go detectors in parallel against collected data
+        |
+        v
+5. Metadata — fetch robots.txt, sitemap, favicon via HTTP
+        |
+        v
+6. Aggregation — assemble final JSON response
+```
 
-## Installation
+## Quick start
 
 ### Docker (recommended)
 
@@ -44,13 +56,13 @@ make build
 ./bin/fingerprinter --config config.yml
 ```
 
-### CLI Flags
+### Usage
 
-| Flag | Description | Default |
-|---|---|---|
-| `--config` | Path to YAML config file | (none, uses defaults) |
-| `--port` | Override server port | (from config) |
-| `--version` | Print version and exit | |
+```bash
+curl -X POST http://localhost:3001/scan \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com"}'
+```
 
 ## Configuration
 
@@ -78,7 +90,19 @@ detections:
   yaml_dir: "./detections/"
 ```
 
-### Environment Variables
+<details>
+<summary>CLI flags</summary>
+
+| Flag | Description | Default |
+|---|---|---|
+| `--config` | Path to YAML config file | (none, uses defaults) |
+| `--port` | Override server port | (from config) |
+| `--version` | Print version and exit | |
+
+</details>
+
+<details>
+<summary>Environment variables</summary>
 
 All configuration values can be overridden with environment variables:
 
@@ -89,6 +113,8 @@ All configuration values can be overridden with environment variables:
 | `FINGERPRINTER_BROWSER_CONTROL_URL` | Browser CDP URL (e.g. `http://localhost:9222`) |
 | `FINGERPRINTER_DETECTIONS_YAML_DIR` | Path to YAML detections directory |
 | `FINGERPRINTER_SCANNER_PROXY` | HTTP proxy URL (e.g. `http://127.0.0.1:8080`) |
+
+</details>
 
 ## API
 
@@ -109,7 +135,14 @@ curl -X POST http://localhost:3001/scan \
   }'
 ```
 
-Response:
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `timeout_seconds` | int | from config | Scan timeout |
+| `max_redirects` | int | from config | Maximum redirects to follow |
+| `skip_404` | bool | `false` | Disable the 404 probe |
+
+<details>
+<summary>Response example</summary>
 
 ```json
 {
@@ -138,19 +171,18 @@ Response:
     "sitemap": "https://example.com/sitemap.xml",
     "favicon": "https://example.com/favicon.ico"
   },
-  "external_hosts":[],
+  "external_hosts": [],
   "scanned_at": "2026-03-13T12:00:00Z"
 }
 ```
+
+</details>
 
 ### `GET /health`
 
 ```bash
 curl http://localhost:3001/health
-```
-
-```json
-{ "status": "ok", "version": "v0.1.0" }
+# {"status":"ok","version":"v0.1.0"}
 ```
 
 ### `GET /detections`
@@ -159,16 +191,7 @@ List all loaded detections.
 
 ```bash
 curl http://localhost:3001/detections
-```
-
-```json
-{
-  "detections": [
-    { "name": "PHP", "category": "Language" },
-    { "name": "jQuery", "category": "JS Library" },
-    { "name": "Magento", "category": "E-commerce" }
-  ]
-}
+# {"detections":[{"name":"PHP","category":"Language"},{"name":"jQuery","category":"JS Library"}]}
 ```
 
 ## Writing Detections
@@ -179,10 +202,14 @@ Add `.yml` files to the `detections/` directory (subdirectories are supported). 
 
 ```
 detections/
+  servers/
+    nginx.yml
   languages/
     php.yml
   js-libraries/
     jquery.yml
+  cms/
+    squidex.yml
 ```
 
 #### Format
@@ -191,7 +218,7 @@ Use single quotes for regex patterns to avoid YAML escaping issues.
 
 ```yaml
 name: Technology Name
-category: Category                 # e.g. Language, CMS, Framework, CDN, Analytics...
+category: Category                 # e.g. Language, CMS, Framework, Server, JS Library...
 website: https://example.com
 checks:
   headers:
@@ -238,7 +265,8 @@ checks:
 | `js` | JS expression evaluated in browser context (main page + path pages) | If `version: true`, expression result is the version |
 | `favicon_hash` | mmh3 hash of the site favicon | No |
 
-#### Example: PHP
+<details>
+<summary>Example: PHP</summary>
 
 ```yaml
 name: PHP
@@ -253,9 +281,34 @@ checks:
     PHPSESSID:
 ```
 
+</details>
+
+<details>
+<summary>Example: Swagger UI (path + body + JS)</summary>
+
+```yaml
+name: Swagger UI
+category: JS Library
+website: https://swagger.io/tools/swagger-ui/
+checks:
+  paths:
+    - path: /api/docs
+      status: 200
+  body:
+    - pattern: 'swagger-ui'
+  js:
+    - expression: "versions['swaggerUI']['version']"
+      version: true
+```
+
+</details>
+
 ### Complex Go Detectors
 
 For detection logic that goes beyond pattern matching (e.g. probing API endpoints, conditional checks), implement the `Detector` interface in Go.
+
+<details>
+<summary>Detector interface</summary>
 
 ```go
 type Detector interface {
@@ -263,26 +316,16 @@ type Detector interface {
     Category() string
     Detect(ctx *DetectionContext) (*DetectionResult, error)
 }
-```
 
-#### DetectionContext
-
-The `Detect` method receives a context with all available data:
-
-```go
 type DetectionContext struct {
     Responses   []ChainedResponse      // All hops in the redirect chain
     Document    *goquery.Document      // Parsed rendered DOM (post-JS)
-    HTTPClient  *http.Client           // HTTP client for direct requests (Go detectors)
+    HTTPClient  *http.Client           // HTTP client for direct requests
     BrowserPool BrowserNavigator       // Navigate to URLs via browser pool
     BrowserPage *rod.Page              // Current page for JS evaluation
     BaseURL     string                 // Final URL after redirects
 }
-```
 
-#### DetectionResult
-
-```go
 type DetectionResult struct {
     Detected bool   // Was the technology found?
     Version  string // Detected version (optional)
@@ -290,25 +333,13 @@ type DetectionResult struct {
 }
 ```
 
-#### Steps
+</details>
+
+Steps:
 
 1. Create a file in `internal/detection/detectors/<category>/` (e.g. `cms/shopify.go`)
 2. Implement the `Detector` interface
-3. Register it in `internal/detection/detectors/registry.go`:
-
-```go
-import (
-    "github.com/JoshuaMart/fingerprinter/internal/detection/detectors/cms"
-    "github.com/JoshuaMart/fingerprinter/internal/models"
-)
-
-func All() []models.Detector {
-    return []models.Detector{
-        &cms.MagentoDetector{},
-        &cms.ShopifyDetector{}, // add here
-    }
-}
-```
+3. Register it in `internal/detection/detectors/registry.go`
 
 ## Development
 
@@ -320,7 +351,7 @@ make build-all  # Cross-compile all platforms
 make docker     # Build Docker image
 ```
 
-Browser-dependent tests (browser, scanner, server packages) require a running CDP-compatible instance. Set `FINGERPRINTER_BROWSER_CONTROL_URL` or ensure `http://localhost:9222` is available. Tests skip gracefully when no browser is reachable.
+Browser-dependent tests (browser, scanner, server packages) require a running CDP-compatible instance. Set `FINGERPRINTER_BROWSER_CONTROL_URL` or ensure `http://localhost:9222` is available.
 
 ## License
 
