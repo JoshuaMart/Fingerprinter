@@ -11,26 +11,53 @@ import (
 type Config struct {
 	Timeout  time.Duration
 	ProxyURL string
+	Headers  map[string]string
 }
 
 // New creates a centralized HTTP client.
 // Redirects are only followed when the target host matches the original host.
 func New(cfg Config) *http.Client {
-	client := &http.Client{
-		Timeout:       cfg.Timeout,
-		CheckRedirect: sameHostOnly,
-	}
+	var base http.RoundTripper
 
 	if cfg.ProxyURL != "" {
 		proxyURL, err := url.Parse(cfg.ProxyURL)
 		if err == nil {
-			client.Transport = &http.Transport{
+			base = &http.Transport{
 				Proxy: http.ProxyURL(proxyURL),
 			}
 		}
 	}
 
+	if len(cfg.Headers) > 0 {
+		base = &headerTransport{base: base, headers: cfg.Headers}
+	}
+
+	client := &http.Client{
+		Timeout:       cfg.Timeout,
+		CheckRedirect: sameHostOnly,
+		Transport:     base,
+	}
+
 	return client
+}
+
+// headerTransport injects custom headers into every outgoing request.
+type headerTransport struct {
+	base    http.RoundTripper
+	headers map[string]string
+}
+
+func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	for k, v := range t.headers {
+		if req.Header.Get(k) == "" {
+			req.Header.Set(k, v)
+		}
+	}
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(req)
 }
 
 // NoRedirect returns a shallow copy of the client that never follows redirects.

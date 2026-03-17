@@ -17,6 +17,7 @@ import (
 	"github.com/JoshuaMart/fingerprinter/internal/models"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
+	"github.com/ysmood/gson"
 	"golang.org/x/net/html"
 )
 
@@ -25,6 +26,7 @@ type Pool struct {
 	browser     *rod.Browser
 	controlURL  string
 	proxyURL    string
+	headers     map[string]string
 	pageTimeout time.Duration
 	mu          sync.Mutex
 	closed      bool
@@ -33,7 +35,7 @@ type Pool struct {
 // NewPool connects to a remote browser via CDP.
 // If proxyURL is non-empty, a dedicated browser context is created so that
 // all pages opened by the pool route traffic through the proxy.
-func NewPool(_ int, pageTimeout time.Duration, controlURL, proxyURL string) (*Pool, error) {
+func NewPool(_ int, pageTimeout time.Duration, controlURL, proxyURL string, headers map[string]string) (*Pool, error) {
 	wsURL, err := resolveWSURL(controlURL)
 	if err != nil {
 		return nil, fmt.Errorf("resolving browser WebSocket URL from %s: %w", controlURL, err)
@@ -71,6 +73,7 @@ func NewPool(_ int, pageTimeout time.Duration, controlURL, proxyURL string) (*Po
 		browser:     b,
 		controlURL:  controlURL,
 		proxyURL:    proxyURL,
+		headers:     headers,
 		pageTimeout: pageTimeout,
 	}, nil
 }
@@ -125,7 +128,24 @@ func (p *Pool) createPage() (*rod.Page, error) {
 			return nil, fmt.Errorf("creating page after reconnect: %w", err)
 		}
 	}
+
+	if err := p.setExtraHeaders(page); err != nil {
+		slog.Warn("failed to set extra headers on page", "error", err)
+	}
+
 	return page, nil
+}
+
+// setExtraHeaders applies configured headers to the page via CDP.
+func (p *Pool) setExtraHeaders(page *rod.Page) error {
+	if len(p.headers) == 0 {
+		return nil
+	}
+	hdrs := make(proto.NetworkHeaders)
+	for k, v := range p.headers {
+		hdrs[k] = gson.New(v)
+	}
+	return proto.NetworkSetExtraHTTPHeaders{Headers: hdrs}.Call(page)
 }
 
 // NavigateResult holds the output of a browser navigation.

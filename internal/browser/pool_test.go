@@ -39,7 +39,7 @@ func startTestServer() *httptest.Server {
 
 func setupPool(t *testing.T) *Pool {
 	t.Helper()
-	pool, err := NewPool(2, 10*time.Second, controlURL(), "")
+	pool, err := NewPool(2, 10*time.Second, controlURL(), "", nil)
 	if err != nil {
 		t.Skipf("browser not available, skipping: %v", err)
 	}
