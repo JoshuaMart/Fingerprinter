@@ -1,0 +1,13 @@
+name: Swagger UI
+category: JS Library
+website: https://swagger.io/tools/swagger-ui/
+checks:
+  paths:
+    - path: /api/docs
+      status: 200
+  body:
+    - pattern: 'swagger-ui'
+    - pattern: 'Swagger UI</title>'
+  js:
+    - expression: "versions['swaggerUI']['version']"
+      version: true
