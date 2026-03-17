@@ -2,6 +2,9 @@ name: Bootstrap
 category: JS Library
 website: https://getbootstrap.com
 checks:
+  body:
+    - pattern: "bootstrap.min.css"
+    - pattern: "bootstrap.min.js"
   js:
     - expression: "bootstrap.Alert.VERSION"
       version: true
