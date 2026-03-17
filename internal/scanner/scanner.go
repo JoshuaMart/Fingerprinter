@@ -135,7 +135,7 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 		// 404 probe via browser (separate page) — also evaluate JS on the 404 page
 		detResponses := make([]models.ChainedResponse, len(responses))
 		copy(detResponses, responses)
-		if req.Options == nil || !req.Options.Skip404 {
+		if req.Options == nil || !req.Options.SkipPathChecks {
 			if notFound, probeJS, probeErr := s.probe404(ctx, baseURL, jsExpressions); probeErr == nil {
 				detResponses = append(detResponses, *notFound)
 				for k, v := range probeJS {
@@ -147,21 +147,26 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 		}
 
 		// Detections (parallel, handled by engine)
+		skipPaths := req.Options != nil && req.Options.SkipPathChecks
 		detCtx := &models.DetectionContext{
-			Responses:   detResponses,
-			Document:    doc,
-			HTTPClient:  s.httpClient,
-			BrowserPool: s.browserPool,
-			BrowserPage: navResult.Page,
-			JSResults:   jsResults,
-			BaseURL:     baseURL,
+			Responses:      detResponses,
+			Document:       doc,
+			HTTPClient:     s.httpClient,
+			BrowserPool:    s.browserPool,
+			BrowserPage:    navResult.Page,
+			JSResults:      jsResults,
+			BaseURL:        baseURL,
+			SkipPathChecks: skipPaths,
 		}
 
 		technologies := s.engine.Run(detCtx)
 
 		// Metadata (HTTP — robots.txt, sitemap, favicon)
 		cookies := chain.ExtractCookies(responses)
-		scanMeta := metadata.Fetch(s.httpClient, baseURL, doc)
+		var scanMeta *models.ScanMetadata
+		if !skipPaths {
+			scanMeta = metadata.Fetch(s.httpClient, baseURL, doc)
+		}
 
 		// Aggregate
 		result = &models.ScanResult{

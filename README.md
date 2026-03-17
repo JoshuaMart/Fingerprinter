@@ -130,7 +130,7 @@ curl -X POST http://localhost:3001/scan \
     "options": {
       "timeout_seconds": 30,
       "max_redirects": 10,
-      "skip_404": false
+      "skip_path_checks": false
     }
   }'
 ```
@@ -139,7 +139,7 @@ curl -X POST http://localhost:3001/scan \
 |---|---|---|---|
 | `timeout_seconds` | int | from config | Scan timeout |
 | `max_redirects` | int | from config | Maximum redirects to follow |
-| `skip_404` | bool | `false` | Disable the 404 probe |
+| `skip_path_checks` | bool | `false` | Skip all path-based operations (404 probe, path detections, metadata fetch) |
 
 <details>
 <summary>Response example</summary>
@@ -325,7 +325,8 @@ type DetectionContext struct {
     HTTPClient  *http.Client           // HTTP client for direct requests
     BrowserPool BrowserNavigator       // Navigate to URLs via browser pool
     BrowserPage *rod.Page              // Current page for JS evaluation
-    BaseURL     string                 // Final URL after redirects
+    BaseURL        string                 // Final URL after redirects
+    SkipPathChecks bool                   // Skip path-based checks (404, paths, metadata)
 }
 
 type DetectionResult struct {

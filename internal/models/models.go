@@ -19,7 +19,7 @@ type ScanRequest struct {
 type ScanOptions struct {
 	MaxRedirects   int  `json:"max_redirects,omitempty"`
 	TimeoutSeconds int  `json:"timeout_seconds,omitempty"`
-	Skip404        bool `json:"skip_404,omitempty"`
+	SkipPathChecks bool `json:"skip_path_checks,omitempty"`
 }
 
 // ScanResult is the complete output of a scan.
@@ -68,13 +68,14 @@ type BrowserNavigator interface {
 
 // DetectionContext provides all data available to a detector.
 type DetectionContext struct {
-	Responses   []ChainedResponse
-	Document    *goquery.Document
-	HTTPClient  *http.Client
-	BrowserPool BrowserNavigator
-	BrowserPage *rod.Page
-	BaseURL     string
-	JSResults   map[string]string // Pre-evaluated JS expression results (expression → value)
+	Responses      []ChainedResponse
+	Document       *goquery.Document
+	HTTPClient     *http.Client
+	BrowserPool    BrowserNavigator
+	BrowserPage    *rod.Page
+	BaseURL        string
+	SkipPathChecks bool
+	JSResults      map[string]string // Pre-evaluated JS expression results (expression → value)
 }
 
 // Detector is the interface for complex Go-based detectors.

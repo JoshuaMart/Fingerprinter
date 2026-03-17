@@ -48,13 +48,15 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 	// Path checks — collect responses and JS results to feed into other checks (not counted as matches)
 	var pathResponses []models.ChainedResponse
 	pathJSResults := make(map[string]string)
-	for _, check := range d.def.Checks.Paths {
-		resp, jsResults, ok := matchPath(ctx.BrowserPool, ctx.BaseURL, check, jsExprs)
-		if ok && resp != nil {
-			pathResponses = append(pathResponses, *resp)
-			for k, v := range jsResults {
-				if _, exists := pathJSResults[k]; !exists {
-					pathJSResults[k] = v
+	if !ctx.SkipPathChecks {
+		for _, check := range d.def.Checks.Paths {
+			resp, jsResults, ok := matchPath(ctx.BrowserPool, ctx.BaseURL, check, jsExprs)
+			if ok && resp != nil {
+				pathResponses = append(pathResponses, *resp)
+				for k, v := range jsResults {
+					if _, exists := pathJSResults[k]; !exists {
+						pathJSResults[k] = v
+					}
 				}
 			}
 		}
