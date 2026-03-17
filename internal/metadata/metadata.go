@@ -27,6 +27,11 @@ func Fetch(client *http.Client, baseURL string, doc *goquery.Document) *models.S
 		}
 	}
 
+	// Check for llms.txt
+	if exists(client, base+"/llms.txt") {
+		meta.LLMsTXT = true
+	}
+
 	// If no sitemap found in robots.txt, check /sitemap.xml directly
 	if meta.Sitemap == nil {
 		sitemapURL := base + "/sitemap.xml"

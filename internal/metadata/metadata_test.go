@@ -92,6 +92,34 @@ func TestSitemapNotFound(t *testing.T) {
 	}
 }
 
+func TestLLMsTXTPresent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/llms.txt" {
+			w.WriteHeader(200)
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	meta := Fetch(srv.Client(), srv.URL, nil)
+	if !meta.LLMsTXT {
+		t.Error("expected llms_txt to be true")
+	}
+}
+
+func TestLLMsTXTAbsent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	meta := Fetch(srv.Client(), srv.URL, nil)
+	if meta.LLMsTXT {
+		t.Error("expected llms_txt to be false")
+	}
+}
+
 func TestFaviconFromHTML(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)

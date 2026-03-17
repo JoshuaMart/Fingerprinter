@@ -168,6 +168,7 @@ curl -X POST http://localhost:3001/scan \
   },
   "metadata": {
     "robots_txt": true,
+    "llms_txt": false,
     "sitemap": "https://example.com/sitemap.xml",
     "favicon": "https://example.com/favicon.ico"
   },

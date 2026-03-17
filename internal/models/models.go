@@ -55,6 +55,7 @@ type Technology struct {
 // ScanMetadata holds additional metadata about the target.
 type ScanMetadata struct {
 	RobotsTXT bool    `json:"robots_txt"`
+	LLMsTXT   bool    `json:"llms_txt"`
 	Sitemap   *string `json:"sitemap"`
 	Favicon   *string `json:"favicon"`
 }
