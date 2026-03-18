@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -137,13 +138,55 @@ func (w *Worker) processMessage(ctx context.Context, msg redis.XMessage) {
 			"target", target,
 			"technologies", len(result.Technologies),
 		)
-		// TODO: emit profile:ready / technology:detected events on Redis
+
+		w.emitEvents(ctx, scanID, target, result)
+
+	case "profile:ready", "technology:detected":
+		// Emitted by this worker — ignore.
 
 	case "transport:response":
 		slog.Info("transport:response not implemented yet, skipping", "id", msg.ID)
 
 	default:
 		slog.Warn("unknown message type, skipping", "id", msg.ID, "type", msgType)
+	}
+}
+
+func (w *Worker) emitEvents(ctx context.Context, scanID, target string, result *models.ScanResult) {
+	for _, tech := range result.Technologies {
+		err := w.client.XAdd(ctx, &redis.XAddArgs{
+			Stream: w.cfg.Stream,
+			Values: map[string]interface{}{
+				"type":     "technology:detected",
+				"scan_id":  scanID,
+				"target":   target,
+				"name":     tech.Name,
+				"version":  tech.Version,
+				"category": tech.Category,
+			},
+		}).Err()
+		if err != nil {
+			slog.Error("failed to emit technology:detected", "scan_id", scanID, "name", tech.Name, "error", err)
+		}
+	}
+
+	payload, err := json.Marshal(result)
+	if err != nil {
+		slog.Error("failed to marshal scan result", "scan_id", scanID, "error", err)
+		return
+	}
+
+	err = w.client.XAdd(ctx, &redis.XAddArgs{
+		Stream: w.cfg.Stream,
+		Values: map[string]interface{}{
+			"type":    "profile:ready",
+			"scan_id": scanID,
+			"target":  target,
+			"result":  string(payload),
+		},
+	}).Err()
+	if err != nil {
+		slog.Error("failed to emit profile:ready", "scan_id", scanID, "error", err)
 	}
 }
 
