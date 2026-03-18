@@ -93,12 +93,34 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 	}
 
 	// Body checks — run against all responses
-	for _, check := range d.def.Checks.Body {
-		total++
-		if v, ok := matchBody(allResponses, check); ok {
-			matches++
-			if v != "" && version == "" {
-				version = v
+	bodyChecks := d.def.Checks.Body
+	if len(bodyChecks.Patterns) > 0 {
+		if bodyChecks.Matcher == "all" {
+			// All patterns must match — counts as a single check
+			total++
+			allMatched := true
+			for _, check := range bodyChecks.Patterns {
+				if v, ok := matchBody(allResponses, check); ok {
+					if v != "" && version == "" {
+						version = v
+					}
+				} else {
+					allMatched = false
+				}
+			}
+			if allMatched {
+				matches++
+			}
+		} else {
+			// Any pattern can match (default) — each pattern is an independent check
+			for _, check := range bodyChecks.Patterns {
+				total++
+				if v, ok := matchBody(allResponses, check); ok {
+					matches++
+					if v != "" && version == "" {
+						version = v
+					}
+				}
 			}
 		}
 	}

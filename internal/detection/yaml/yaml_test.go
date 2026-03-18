@@ -206,10 +206,10 @@ func TestCheckBody(t *testing.T) {
 		Name:     "WordPress",
 		Category: "CMS",
 		Checks: Checks{
-			Body: []BodyCheck{
+			Body: BodyChecks{Patterns: []BodyCheck{
 				{Pattern: "wp-content/"},
 				{Pattern: "wp-includes/"},
-			},
+			}},
 		},
 	})
 
@@ -233,11 +233,11 @@ func TestCheckBodyPartialMatch(t *testing.T) {
 		Name:     "WordPress",
 		Category: "CMS",
 		Checks: Checks{
-			Body: []BodyCheck{
+			Body: BodyChecks{Patterns: []BodyCheck{
 				{Pattern: "wp-content/"},
 				{Pattern: "wp-includes/"},
 				{Pattern: "wp-json/"},
-			},
+			}},
 		},
 	})
 
@@ -255,6 +255,92 @@ func TestCheckBodyPartialMatch(t *testing.T) {
 		t.Error("expected detection")
 	}
 	// 1 out of 3 checks matched
+}
+
+func TestCheckBodyMatcherAll(t *testing.T) {
+	det := NewDetector(Definition{
+		Name:     "Selligent",
+		Category: "CRM",
+		Checks: Checks{
+			Body: BodyChecks{
+				Matcher: "all",
+				Patterns: []BodyCheck{
+					{Pattern: "<title>Selligent Login</title>"},
+					{Pattern: `<span class="release">`},
+				},
+			},
+		},
+	})
+
+	ctx := &models.DetectionContext{
+		Responses: []models.ChainedResponse{
+			{Body: []byte(`<title>Selligent Login</title><span class="release">version 10.3.6</span>`)},
+		},
+	}
+
+	res, err := det.Detect(ctx)
+	if err != nil {
+		t.Fatalf("Detect failed: %v", err)
+	}
+	if !res.Detected {
+		t.Error("expected detection when all body patterns match")
+	}
+}
+
+func TestCheckBodyMatcherAllPartialFails(t *testing.T) {
+	det := NewDetector(Definition{
+		Name:     "Selligent",
+		Category: "CRM",
+		Checks: Checks{
+			Body: BodyChecks{
+				Matcher: "all",
+				Patterns: []BodyCheck{
+					{Pattern: "<title>Selligent Login</title>"},
+					{Pattern: `<span class="release">`},
+				},
+			},
+		},
+	})
+
+	// Only one pattern matches
+	ctx := &models.DetectionContext{
+		Responses: []models.ChainedResponse{
+			{Body: []byte(`<span class="release">version 10.3.6</span>`)},
+		},
+	}
+
+	res, err := det.Detect(ctx)
+	if err != nil {
+		t.Fatalf("Detect failed: %v", err)
+	}
+	if res.Detected {
+		t.Error("expected no detection when only one pattern matches with matcher: all")
+	}
+}
+
+func TestCheckBodyMatcherAllParsedFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	writeYAML(t, dir, "test.yml", `
+name: TestTech
+category: CRM
+checks:
+  body:
+    matcher: all
+    patterns:
+      - pattern: 'pattern-one'
+      - pattern: 'pattern-two'
+`)
+
+	defs, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir failed: %v", err)
+	}
+	if defs[0].Checks.Body.Matcher != "all" {
+		t.Errorf("expected matcher 'all', got %q", defs[0].Checks.Body.Matcher)
+	}
+	if len(defs[0].Checks.Body.Patterns) != 2 {
+		t.Errorf("expected 2 body patterns, got %d", len(defs[0].Checks.Body.Patterns))
+	}
 }
 
 // --- Meta check tests ---
@@ -399,9 +485,9 @@ func TestCheckPaths(t *testing.T) {
 			Paths: []PathCheck{
 				{Path: "/wp-login.php", Status: 200},
 			},
-			Body: []BodyCheck{
+			Body: BodyChecks{Patterns: []BodyCheck{
 				{Pattern: "loginform"},
-			},
+			}},
 		},
 	})
 
@@ -434,9 +520,9 @@ func TestCheckPathsNoMatch(t *testing.T) {
 			Paths: []PathCheck{
 				{Path: "/wp-login.php", Status: 200},
 			},
-			Body: []BodyCheck{
+			Body: BodyChecks{Patterns: []BodyCheck{
 				{Pattern: "loginform"},
-			},
+			}},
 		},
 	})
 
@@ -475,9 +561,9 @@ func TestCheckPathResponseFeedsBodyCheck(t *testing.T) {
 			Paths: []PathCheck{
 				{Path: "/api/docs", Status: 200},
 			},
-			Body: []BodyCheck{
+			Body: BodyChecks{Patterns: []BodyCheck{
 				{Pattern: "swagger-ui"},
-			},
+			}},
 		},
 	})
 
@@ -517,9 +603,9 @@ func TestCheckPathResponseNoBodyMatch(t *testing.T) {
 			Paths: []PathCheck{
 				{Path: "/api/docs", Status: 200},
 			},
-			Body: []BodyCheck{
+			Body: BodyChecks{Patterns: []BodyCheck{
 				{Pattern: "swagger-ui"},
-			},
+			}},
 		},
 	})
 
@@ -556,9 +642,9 @@ func TestCheckPathResponseFeedsJSCheck(t *testing.T) {
 			Paths: []PathCheck{
 				{Path: "/api/docs", Status: 200, Browser: true},
 			},
-			Body: []BodyCheck{
+			Body: BodyChecks{Patterns: []BodyCheck{
 				{Pattern: "swagger-ui"},
-			},
+			}},
 			JS: []JSCheck{
 				{Expression: "versions['swaggerUI']['version']", Version: true},
 			},
@@ -606,9 +692,9 @@ func TestCheckPathHTTPMode(t *testing.T) {
 			Paths: []PathCheck{
 				{Path: "/status", Status: 200}, // browser: false (default)
 			},
-			Body: []BodyCheck{
+			Body: BodyChecks{Patterns: []BodyCheck{
 				{Pattern: `"status":"ok"`},
-			},
+			}},
 		},
 	})
 
@@ -636,9 +722,9 @@ func TestCheckPathHTTPModeNilClient(t *testing.T) {
 			Paths: []PathCheck{
 				{Path: "/status", Status: 200},
 			},
-			Body: []BodyCheck{
+			Body: BodyChecks{Patterns: []BodyCheck{
 				{Pattern: `"status":"ok"`},
-			},
+			}},
 		},
 	})
 
@@ -675,9 +761,9 @@ func TestCheckPathBrowserModeExplicit(t *testing.T) {
 			Paths: []PathCheck{
 				{Path: "/app", Status: 200, Browser: true},
 			},
-			Body: []BodyCheck{
+			Body: BodyChecks{Patterns: []BodyCheck{
 				{Pattern: `id="app"`},
-			},
+			}},
 		},
 	})
 
@@ -776,9 +862,9 @@ func TestCombinedChecks(t *testing.T) {
 			Headers: map[string]HeaderCheck{
 				"x-powered-by": {Pattern: "WordPress"},
 			},
-			Body: []BodyCheck{
+			Body: BodyChecks{Patterns: []BodyCheck{
 				{Pattern: "wp-content/"},
-			},
+			}},
 			Meta: map[string]MetaCheck{
 				"generator": {Pattern: "WordPress", Version: `WordPress\s+(\d+\.\d+)`},
 			},

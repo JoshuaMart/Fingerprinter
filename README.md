@@ -230,8 +230,10 @@ checks:
       version: '(capture group)'   # optional, applied on the same value as pattern
 
   body:
-    - pattern: 'regex in body'
-      version: '(\d+\.\d+)'        # optional, applied on the same value as pattern
+    matcher: any                   # "any" (default) = at least one match, "all" = all must match
+    patterns:
+      - pattern: 'regex in body'
+        version: '(\d+\.\d+)'     # optional, applied on the full body
 
   meta:
     meta-name:                     # matches <meta name="..." content="...">
@@ -261,7 +263,7 @@ checks:
 | Check | Description | Version extraction |
 |---|---|---|
 | `headers` | Regex on HTTP response header value (no pattern = presence check) | `version` regex on same value |
-| `body` | Regex on response body | `version` regex on same body match |
+| `body` | Regex on response body. `matcher: all` requires all patterns to match (default `any`) | `version` regex on full body |
 | `meta` | Regex on `<meta>` tag content attribute | `version` regex on content value |
 | `cookies` | Cookie name existence, optional value regex | No |
 | `paths` | GET path via HTTP client (default) or browser (`browser: true`), check status code. Response is added to the pool for body/headers/cookies/js checks | No |
@@ -298,7 +300,8 @@ checks:
     - path: /api/docs
       status: 200
   body:
-    - pattern: 'swagger-ui'
+    patterns:
+      - pattern: 'swagger-ui'
   js:
     - expression: "versions['swaggerUI']['version']"
       version: true
