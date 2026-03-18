@@ -17,7 +17,7 @@ build-all:
 	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BINARY)-darwin-arm64 ./cmd/fingerprinter
 
 run: build
-	./bin/$(BINARY) --config config.example.yml
+	./bin/$(BINARY) --config config.yml
 
 test:
 	go test -race -cover ./...
