@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/golang-1.26-blue?logo=go">
 </p>
 
-Web technology detection engine with a built-in REST API.
+Web technology detection engine with a built-in REST API and Redis Stream worker mode.
 
 Scan a URL using a headless browser, capture the full redirect chain via CDP network events, analyze HTTP headers, rendered HTML, cookies, meta tags, JavaScript globals, and return detected technologies with version information.
 
@@ -56,12 +56,26 @@ make build
 ./bin/fingerprinter --config config.yml
 ```
 
+### Worker mode
+
+Run as a Redis Stream consumer instead of an HTTP API. Requires a remote Redis instance.
+
+```bash
+./bin/fingerprinter --mode worker --config config.yml
+```
+
+The worker consumes messages from the `scans` stream and emits events back on the same stream. A health-only HTTP server (`/health`) is started for k8s probes.
+
 ### Usage
 
 ```bash
+# API mode (default)
 curl -X POST http://localhost:3001/scan \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com"}'
+
+# Worker mode — push a scan job to Redis
+redis-cli XADD scans '*' type scan:requested scan_id test-123 target https://example.com
 ```
 
 ## Configuration
@@ -88,6 +102,12 @@ browser:
 
 detections:
   yaml_dir: "./detections/"
+
+# redis:                          # required for worker mode only
+#   url: "redis://localhost:6379"
+#   stream: "scans"
+#   group: "fingerprinter"
+#   consumer: ""                  # defaults to hostname
 ```
 
 <details>
@@ -97,6 +117,7 @@ detections:
 |---|---|---|
 | `--config` | Path to YAML config file | (none, uses defaults) |
 | `--port` | Override server port | (from config) |
+| `--mode` | Run mode: `api` or `worker` | `api` |
 | `--version` | Print version and exit | |
 
 </details>
@@ -113,6 +134,10 @@ All configuration values can be overridden with environment variables:
 | `FINGERPRINTER_BROWSER_CONTROL_URL` | Browser CDP URL (e.g. `http://localhost:9222`) |
 | `FINGERPRINTER_DETECTIONS_YAML_DIR` | Path to YAML detections directory |
 | `FINGERPRINTER_SCANNER_PROXY` | HTTP proxy URL (e.g. `http://127.0.0.1:8080`) |
+| `FINGERPRINTER_REDIS_URL` | Redis URL (e.g. `redis://localhost:6379`) |
+| `FINGERPRINTER_REDIS_STREAM` | Redis Stream name (default: `scans`) |
+| `FINGERPRINTER_REDIS_GROUP` | Consumer group name (default: `fingerprinter`) |
+| `FINGERPRINTER_REDIS_CONSUMER` | Consumer name (default: hostname) |
 
 </details>
 
@@ -195,6 +220,24 @@ List all loaded detections.
 curl http://localhost:3001/detections
 # {"detections":[{"name":"PHP","category":"Language"},{"name":"jQuery","category":"JS Library"}]}
 ```
+
+## Worker Events
+
+In worker mode, Fingerprinter consumes and emits events on a Redis Stream.
+
+### Consumed events
+
+| Type | Fields | Description |
+|---|---|---|
+| `scan:requested` | `scan_id`, `target` | Triggers a full scan on the target URL |
+| `endpoint:detected` | `scan_id`, `target` | Same as `scan:requested` |
+
+### Emitted events
+
+| Type | Fields | Description |
+|---|---|---|
+| `technology:detected` | `scan_id`, `target`, `name`, `version`, `category` | One event per detected technology |
+| `profile:ready` | `scan_id`, `target`, `result` | Full scan result as JSON in `result` field |
 
 ## Writing Detections
 
