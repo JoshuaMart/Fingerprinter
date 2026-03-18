@@ -42,10 +42,8 @@ type DetectionsConfig struct {
 }
 
 type RedisConfig struct {
-	URL      string `yaml:"url"`
-	Stream   string `yaml:"stream"`
-	Group    string `yaml:"group"`
-	Consumer string `yaml:"consumer"`
+	URL    string `yaml:"url"`
+	Stream string `yaml:"stream"`
 }
 
 func defaults() *Config {
@@ -72,7 +70,6 @@ func defaults() *Config {
 		},
 		Redis: RedisConfig{
 			Stream: "scans",
-			Group:  "fingerprinter",
 		},
 	}
 }
@@ -143,12 +140,6 @@ func loadEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("FINGERPRINTER_REDIS_STREAM"); v != "" {
 		cfg.Redis.Stream = v
-	}
-	if v := os.Getenv("FINGERPRINTER_REDIS_GROUP"); v != "" {
-		cfg.Redis.Group = v
-	}
-	if v := os.Getenv("FINGERPRINTER_REDIS_CONSUMER"); v != "" {
-		cfg.Redis.Consumer = v
 	}
 }
 

@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -22,10 +20,10 @@ type Scanner interface {
 
 // Worker consumes scan jobs from a Redis Stream.
 type Worker struct {
-	cfg      *config.RedisConfig
-	scanner  Scanner
-	client   *redis.Client
-	consumer string
+	cfg     *config.RedisConfig
+	scanner Scanner
+	client  *redis.Client
+	lastID  string
 }
 
 // New creates a new Worker. Returns an error if the Redis config is invalid.
@@ -39,20 +37,11 @@ func New(cfg *config.RedisConfig, scanner Scanner) (*Worker, error) {
 		return nil, fmt.Errorf("parsing redis URL: %w", err)
 	}
 
-	consumer := cfg.Consumer
-	if consumer == "" {
-		h, err := os.Hostname()
-		if err != nil {
-			return nil, fmt.Errorf("resolving hostname for consumer name: %w", err)
-		}
-		consumer = h
-	}
-
 	return &Worker{
-		cfg:      cfg,
-		scanner:  scanner,
-		client:   redis.NewClient(opts),
-		consumer: consumer,
+		cfg:     cfg,
+		scanner: scanner,
+		client:  redis.NewClient(opts),
+		lastID:  "$",
 	}, nil
 }
 
@@ -62,25 +51,13 @@ func (w *Worker) Run(ctx context.Context) error {
 		return fmt.Errorf("redis ping failed: %w", err)
 	}
 
-	// Create consumer group (idempotent).
-	err := w.client.XGroupCreateMkStream(ctx, w.cfg.Stream, w.cfg.Group, "0").Err()
-	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
-		return fmt.Errorf("creating consumer group: %w", err)
-	}
-
-	slog.Info("worker started",
-		"stream", w.cfg.Stream,
-		"group", w.cfg.Group,
-		"consumer", w.consumer,
-	)
+	slog.Info("worker started", "stream", w.cfg.Stream)
 
 	for {
-		streams, err := w.client.XReadGroup(ctx, &redis.XReadGroupArgs{
-			Group:    w.cfg.Group,
-			Consumer: w.consumer,
-			Streams:  []string{w.cfg.Stream, ">"},
-			Count:    1,
-			Block:    5 * time.Second,
+		streams, err := w.client.XRead(ctx, &redis.XReadArgs{
+			Streams: []string{w.cfg.Stream, w.lastID},
+			Count:   1,
+			Block:   5 * time.Second,
 		}).Result()
 
 		if err != nil {
@@ -90,18 +67,15 @@ func (w *Worker) Run(ctx context.Context) error {
 			if err == redis.Nil {
 				continue
 			}
-			slog.Error("xreadgroup error", "error", err)
+			slog.Error("xread error", "error", err)
 			time.Sleep(time.Second)
 			continue
 		}
 
 		for _, stream := range streams {
 			for _, msg := range stream.Messages {
+				w.lastID = msg.ID
 				w.processMessage(ctx, msg)
-
-				if err := w.client.XAck(ctx, w.cfg.Stream, w.cfg.Group, msg.ID).Err(); err != nil {
-					slog.Error("xack failed", "id", msg.ID, "error", err)
-				}
 			}
 		}
 	}

@@ -22,5 +22,3 @@ detections:
 # redis:
 #   url: "redis://localhost:6379"
 #   stream: "scans"
-#   group: "fingerprinter"
-#   consumer: ""  # defaults to hostname

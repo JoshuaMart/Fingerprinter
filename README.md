@@ -106,8 +106,6 @@ detections:
 # redis:                          # required for worker mode only
 #   url: "redis://localhost:6379"
 #   stream: "scans"
-#   group: "fingerprinter"
-#   consumer: ""                  # defaults to hostname
 ```
 
 <details>
@@ -136,8 +134,6 @@ All configuration values can be overridden with environment variables:
 | `FINGERPRINTER_SCANNER_PROXY` | HTTP proxy URL (e.g. `http://127.0.0.1:8080`) |
 | `FINGERPRINTER_REDIS_URL` | Redis URL (e.g. `redis://localhost:6379`) |
 | `FINGERPRINTER_REDIS_STREAM` | Redis Stream name (default: `scans`) |
-| `FINGERPRINTER_REDIS_GROUP` | Consumer group name (default: `fingerprinter`) |
-| `FINGERPRINTER_REDIS_CONSUMER` | Consumer name (default: hostname) |
 
 </details>
 
