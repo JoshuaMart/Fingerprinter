@@ -5,6 +5,7 @@ checks:
   paths:
     - path: /api/docs
       status: 200
+      browser: true
   body:
     - pattern: 'swagger-ui'
     - pattern: 'Swagger UI</title>'
