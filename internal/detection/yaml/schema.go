@@ -43,9 +43,11 @@ type CookieCheck struct {
 }
 
 // PathCheck sends a request to a path and checks the status code.
+// By default, uses HTTP client. Set Browser: true to use the browser (needed for JS eval on path page).
 type PathCheck struct {
-	Path   string `yaml:"path"`
-	Status int    `yaml:"status"`
+	Path    string `yaml:"path"`
+	Status  int    `yaml:"status"`
+	Browser bool   `yaml:"browser"`
 }
 
 // JSCheck evaluates a JS expression in the browser context.

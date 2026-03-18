@@ -406,9 +406,9 @@ func TestCheckPaths(t *testing.T) {
 	})
 
 	ctx := &models.DetectionContext{
-		Responses:   []models.ChainedResponse{},
-		BrowserPool: &mockNavigator{client: srv.Client()},
-		BaseURL:     srv.URL,
+		Responses:  []models.ChainedResponse{},
+		HTTPClient: srv.Client(),
+		BaseURL:    srv.URL,
 	}
 
 	res, err := det.Detect(ctx)
@@ -441,9 +441,9 @@ func TestCheckPathsNoMatch(t *testing.T) {
 	})
 
 	ctx := &models.DetectionContext{
-		Responses:   []models.ChainedResponse{},
-		BrowserPool: &mockNavigator{client: srv.Client()},
-		BaseURL:     srv.URL,
+		Responses:  []models.ChainedResponse{},
+		HTTPClient: srv.Client(),
+		BaseURL:    srv.URL,
 	}
 
 	res, err := det.Detect(ctx)
@@ -482,9 +482,9 @@ func TestCheckPathResponseFeedsBodyCheck(t *testing.T) {
 	})
 
 	ctx := &models.DetectionContext{
-		Responses:   []models.ChainedResponse{},
-		BrowserPool: &mockNavigator{client: srv.Client()},
-		BaseURL:     srv.URL,
+		Responses:  []models.ChainedResponse{},
+		HTTPClient: srv.Client(),
+		BaseURL:    srv.URL,
 	}
 
 	res, err := det.Detect(ctx)
@@ -524,9 +524,9 @@ func TestCheckPathResponseNoBodyMatch(t *testing.T) {
 	})
 
 	ctx := &models.DetectionContext{
-		Responses:   []models.ChainedResponse{},
-		BrowserPool: &mockNavigator{client: srv.Client()},
-		BaseURL:     srv.URL,
+		Responses:  []models.ChainedResponse{},
+		HTTPClient: srv.Client(),
+		BaseURL:    srv.URL,
 	}
 
 	res, err := det.Detect(ctx)
@@ -554,7 +554,7 @@ func TestCheckPathResponseFeedsJSCheck(t *testing.T) {
 		Category: "JS Library",
 		Checks: Checks{
 			Paths: []PathCheck{
-				{Path: "/api/docs", Status: 200},
+				{Path: "/api/docs", Status: 200, Browser: true},
 			},
 			Body: []BodyCheck{
 				{Pattern: "swagger-ui"},
@@ -583,6 +583,150 @@ func TestCheckPathResponseFeedsJSCheck(t *testing.T) {
 	}
 	if res.Version != "5.32.0" {
 		t.Errorf("expected version '5.32.0', got %q", res.Version)
+	}
+}
+
+// --- Path HTTP vs Browser mode tests ---
+
+func TestCheckPathHTTPMode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/status" {
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	det := NewDetector(Definition{
+		Name:     "StatusAPI",
+		Category: "Other",
+		Checks: Checks{
+			Paths: []PathCheck{
+				{Path: "/status", Status: 200}, // browser: false (default)
+			},
+			Body: []BodyCheck{
+				{Pattern: `"status":"ok"`},
+			},
+		},
+	})
+
+	// Only HTTPClient set, no BrowserPool — HTTP path must work
+	ctx := &models.DetectionContext{
+		Responses:  []models.ChainedResponse{},
+		HTTPClient: srv.Client(),
+		BaseURL:    srv.URL,
+	}
+
+	res, err := det.Detect(ctx)
+	if err != nil {
+		t.Fatalf("Detect failed: %v", err)
+	}
+	if !res.Detected {
+		t.Error("expected detection via HTTP path check")
+	}
+}
+
+func TestCheckPathHTTPModeNilClient(t *testing.T) {
+	det := NewDetector(Definition{
+		Name:     "StatusAPI",
+		Category: "Other",
+		Checks: Checks{
+			Paths: []PathCheck{
+				{Path: "/status", Status: 200},
+			},
+			Body: []BodyCheck{
+				{Pattern: `"status":"ok"`},
+			},
+		},
+	})
+
+	// No HTTPClient and no BrowserPool
+	ctx := &models.DetectionContext{
+		Responses: []models.ChainedResponse{},
+		BaseURL:   "http://localhost:9999",
+	}
+
+	res, err := det.Detect(ctx)
+	if err != nil {
+		t.Fatalf("Detect failed: %v", err)
+	}
+	if res.Detected {
+		t.Error("expected no detection when HTTP client is nil")
+	}
+}
+
+func TestCheckPathBrowserModeExplicit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/app" {
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`<div id="app">SPA</div>`))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	det := NewDetector(Definition{
+		Name:     "SPA",
+		Category: "JS Framework",
+		Checks: Checks{
+			Paths: []PathCheck{
+				{Path: "/app", Status: 200, Browser: true},
+			},
+			Body: []BodyCheck{
+				{Pattern: `id="app"`},
+			},
+		},
+	})
+
+	// BrowserPool set, no HTTPClient — browser path must work
+	ctx := &models.DetectionContext{
+		Responses:   []models.ChainedResponse{},
+		BrowserPool: &mockNavigator{client: srv.Client()},
+		BaseURL:     srv.URL,
+	}
+
+	res, err := det.Detect(ctx)
+	if err != nil {
+		t.Fatalf("Detect failed: %v", err)
+	}
+	if !res.Detected {
+		t.Error("expected detection via browser path check")
+	}
+}
+
+func TestPathCheckBrowserFieldParsedFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	writeYAML(t, dir, "test.yml", `
+name: TestTech
+category: CMS
+checks:
+  paths:
+    - path: /api
+      status: 200
+    - path: /app
+      status: 200
+      browser: true
+`)
+
+	defs, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir failed: %v", err)
+	}
+	if len(defs) != 1 {
+		t.Fatalf("expected 1 definition, got %d", len(defs))
+	}
+	paths := defs[0].Checks.Paths
+	if len(paths) != 2 {
+		t.Fatalf("expected 2 path checks, got %d", len(paths))
+	}
+	if paths[0].Browser {
+		t.Error("first path check should have browser=false by default")
+	}
+	if !paths[1].Browser {
+		t.Error("second path check should have browser=true")
 	}
 }
 
@@ -655,9 +799,9 @@ func TestCombinedChecks(t *testing.T) {
 				Body:       []byte(`<link href="/wp-content/themes/style.css">`),
 			},
 		},
-		Document:    doc,
-		BrowserPool: &mockNavigator{client: srv.Client()},
-		BaseURL:     srv.URL,
+		Document:   doc,
+		HTTPClient: srv.Client(),
+		BaseURL:    srv.URL,
 	}
 
 	res, err := det.Detect(ctx)

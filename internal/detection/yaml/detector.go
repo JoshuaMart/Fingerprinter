@@ -3,7 +3,9 @@ package yaml
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"strings"
 
@@ -50,13 +52,22 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 	pathJSResults := make(map[string]string)
 	if !ctx.SkipPathChecks {
 		for _, check := range d.def.Checks.Paths {
-			resp, jsResults, ok := matchPath(ctx.BrowserPool, ctx.BaseURL, check, jsExprs)
-			if ok && resp != nil {
-				pathResponses = append(pathResponses, *resp)
-				for k, v := range jsResults {
-					if _, exists := pathJSResults[k]; !exists {
-						pathJSResults[k] = v
+			if check.Browser {
+				// Browser mode: navigate via browser, supports JS eval on path page
+				resp, jsResults, ok := matchPath(ctx.BrowserPool, ctx.BaseURL, check, jsExprs)
+				if ok && resp != nil {
+					pathResponses = append(pathResponses, *resp)
+					for k, v := range jsResults {
+						if _, exists := pathJSResults[k]; !exists {
+							pathJSResults[k] = v
+						}
 					}
+				}
+			} else {
+				// HTTP mode (default): simple GET via HTTP client
+				resp, ok := matchPathHTTP(ctx.HTTPClient, ctx.BaseURL, check)
+				if ok && resp != nil {
+					pathResponses = append(pathResponses, *resp)
 				}
 			}
 		}
@@ -258,6 +269,31 @@ func matchPath(navigator models.BrowserNavigator, baseURL string, check PathChec
 		return resp, nil, true
 	}
 	return nil, nil, false
+}
+
+func matchPathHTTP(httpClient *http.Client, baseURL string, check PathCheck) (*models.ChainedResponse, bool) {
+	if httpClient == nil {
+		return nil, false
+	}
+	u := strings.TrimRight(baseURL, "/") + check.Path
+
+	resp, err := httpClient.Get(u) //nolint:noctx
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+	cr := &models.ChainedResponse{
+		URL:        u,
+		StatusCode: resp.StatusCode,
+		Body:       body,
+		RawHeaders: resp.Header,
+	}
+	if resp.StatusCode == check.Status {
+		return cr, true
+	}
+	return nil, false
 }
 
 func matchJSWithResults(jsResults map[string]string, ctx *models.DetectionContext, check JSCheck) (string, bool) {
