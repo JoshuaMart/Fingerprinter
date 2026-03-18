@@ -1,0 +1,13 @@
+name: Selligent
+category: CRM
+website: https://www.selligent.com
+checks:
+  paths:
+    - path: /sm/login.jsp
+      status: 200
+  body:
+    matcher: all
+    patterns:
+      - pattern: "<title>Selligent Login</title>"
+      - pattern: '<span class="release">'
+        version: 'version\s+([\d.]+)'
