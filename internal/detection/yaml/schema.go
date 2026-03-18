@@ -11,12 +11,19 @@ type Definition struct {
 // Checks holds all check types for a detection.
 type Checks struct {
 	Headers     map[string]HeaderCheck `yaml:"headers"`
-	Body        []BodyCheck            `yaml:"body"`
+	Body        BodyChecks             `yaml:"body"`
 	Meta        map[string]MetaCheck   `yaml:"meta"`
 	Cookies     map[string]CookieCheck `yaml:"cookies"`
 	Paths       []PathCheck            `yaml:"paths"`
 	JS          []JSCheck              `yaml:"js"`
 	FaviconHash []int32                `yaml:"favicon_hash"`
+}
+
+// BodyChecks holds body check patterns with a matcher strategy.
+// Matcher: "any" (default) = at least one pattern must match, "all" = all patterns must match.
+type BodyChecks struct {
+	Matcher  string      `yaml:"matcher"`
+	Patterns []BodyCheck `yaml:"patterns"`
 }
 
 // HeaderCheck matches a regex against an HTTP header value.

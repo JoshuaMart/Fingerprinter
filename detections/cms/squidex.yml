@@ -3,7 +3,8 @@ category: CMS
 website: https://squidex.io
 checks:
   body:
-    - pattern: "<title>Squidex Headless CMS</title>"
-    - pattern: "<div>Loading Squidex</div>"
+    patterns:
+      - pattern: "<title>Squidex Headless CMS</title>"
+      - pattern: "<div>Loading Squidex</div>"
   favicon_hash:
     - 1099097618

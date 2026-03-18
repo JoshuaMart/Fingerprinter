@@ -7,8 +7,9 @@ checks:
       status: 200
       browser: true
   body:
-    - pattern: 'swagger-ui'
-    - pattern: 'Swagger UI</title>'
+    patterns:
+      - pattern: 'swagger-ui'
+      - pattern: 'Swagger UI</title>'
   js:
     - expression: "versions['swaggerUI']['version']"
       version: true
