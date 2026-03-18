@@ -12,6 +12,7 @@ import (
 	"github.com/JoshuaMart/fingerprinter/internal/config"
 	"github.com/JoshuaMart/fingerprinter/internal/scanner"
 	"github.com/JoshuaMart/fingerprinter/internal/server"
+	"github.com/JoshuaMart/fingerprinter/internal/worker"
 )
 
 var version = "dev"
@@ -21,11 +22,13 @@ func main() {
 		configPath   string
 		portOverride int
 		showVersion  bool
+		mode         string
 	)
 
 	flag.StringVar(&configPath, "config", "", "path to configuration file")
 	flag.IntVar(&portOverride, "port", 0, "override server port")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
+	flag.StringVar(&mode, "mode", "api", "run mode: api or worker")
 	flag.Parse()
 
 	if showVersion {
@@ -53,9 +56,37 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv := server.New(cfg, scn)
-	if err := srv.Run(ctx); err != nil {
-		slog.Error("server error", "error", err)
+	switch mode {
+	case "api":
+		srv := server.New(cfg, scn)
+		if err := srv.Run(ctx); err != nil {
+			slog.Error("server error", "error", err)
+			os.Exit(1)
+		}
+
+	case "worker":
+		w, err := worker.New(&cfg.Redis, scn)
+		if err != nil {
+			slog.Error("failed to initialize worker", "error", err)
+			os.Exit(1)
+		}
+		defer func() { _ = w.Close() }()
+
+		// Start health-only HTTP server in background.
+		healthSrv := server.NewHealthOnly(cfg)
+		go func() {
+			if err := healthSrv.Run(ctx); err != nil {
+				slog.Error("health server error", "error", err)
+			}
+		}()
+
+		if err := w.Run(ctx); err != nil {
+			slog.Error("worker error", "error", err)
+			os.Exit(1)
+		}
+
+	default:
+		slog.Error("unknown mode", "mode", mode)
 		os.Exit(1)
 	}
 }

@@ -14,6 +14,7 @@ type Config struct {
 	Scanner    ScannerConfig    `yaml:"scanner"`
 	Browser    BrowserConfig    `yaml:"browser"`
 	Detections DetectionsConfig `yaml:"detections"`
+	Redis      RedisConfig      `yaml:"redis"`
 }
 
 type ServerConfig struct {
@@ -40,6 +41,13 @@ type DetectionsConfig struct {
 	YAMLDir string `yaml:"yaml_dir"`
 }
 
+type RedisConfig struct {
+	URL      string `yaml:"url"`
+	Stream   string `yaml:"stream"`
+	Group    string `yaml:"group"`
+	Consumer string `yaml:"consumer"`
+}
+
 func defaults() *Config {
 	return &Config{
 		Server: ServerConfig{
@@ -61,6 +69,10 @@ func defaults() *Config {
 		},
 		Detections: DetectionsConfig{
 			YAMLDir: "./detections/",
+		},
+		Redis: RedisConfig{
+			Stream: "scans",
+			Group:  "fingerprinter",
 		},
 	}
 }
@@ -125,6 +137,18 @@ func loadEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("FINGERPRINTER_SCANNER_PROXY"); v != "" {
 		cfg.Scanner.Proxy = v
+	}
+	if v := os.Getenv("FINGERPRINTER_REDIS_URL"); v != "" {
+		cfg.Redis.URL = v
+	}
+	if v := os.Getenv("FINGERPRINTER_REDIS_STREAM"); v != "" {
+		cfg.Redis.Stream = v
+	}
+	if v := os.Getenv("FINGERPRINTER_REDIS_GROUP"); v != "" {
+		cfg.Redis.Group = v
+	}
+	if v := os.Getenv("FINGERPRINTER_REDIS_CONSUMER"); v != "" {
+		cfg.Redis.Consumer = v
 	}
 }
 

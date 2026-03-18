@@ -32,6 +32,16 @@ func New(cfg *config.Config, scn *scanner.Scanner) *Server {
 	return s
 }
 
+// NewHealthOnly creates a Server that only exposes the /health endpoint.
+func NewHealthOnly(cfg *config.Config) *Server {
+	s := &Server{cfg: cfg}
+	r := chi.NewRouter()
+	r.Use(middleware.Recoverer)
+	r.Get("/health", s.handleHealth)
+	s.router = r
+	return s
+}
+
 func (s *Server) setupRouter() {
 	r := chi.NewRouter()
 
