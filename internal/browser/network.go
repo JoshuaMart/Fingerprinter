@@ -67,6 +67,18 @@ func (nc *NetworkCapture) HandleRequestWillBeSent(e *proto.NetworkRequestWillBeS
 			headers:    cdpHeadersToHTTPHeader(e.RedirectResponse.Headers),
 			requestID:  e.RequestID,
 		})
+		return
+	}
+
+	// New Document navigation (JS redirect: window.location, meta refresh, etc.)
+	// — different requestID means the browser started a new top-level navigation.
+	// Save the previous finalResponse as a hop and track the new request.
+	if e.Type == proto.NetworkResourceTypeDocument && e.RequestID != nc.mainRequestID {
+		if nc.finalResponse != nil {
+			nc.redirectHops = append(nc.redirectHops, *nc.finalResponse)
+			nc.finalResponse = nil
+		}
+		nc.mainRequestID = e.RequestID
 	}
 }
 
