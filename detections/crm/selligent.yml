@@ -2,9 +2,6 @@ name: Selligent
 category: CRM
 website: https://www.selligent.com
 checks:
-  paths:
-    - path: /sm/login.jsp
-      status: 200
   body:
     matcher: all
     patterns:
