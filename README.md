@@ -246,6 +246,7 @@ checks:
   paths:                           # responses feed into body/headers/cookies/js checks
     - path: '/specific-path'
       status: 200                  # expected HTTP status code
+      browser: false               # optional, default false (HTTP client). Set true for browser navigation (needed for JS eval on path page)
 
   js:
     - expression: 'window.jQuery'  # JS expression evaluated in browser context
@@ -263,7 +264,7 @@ checks:
 | `body` | Regex on response body | `version` regex on same body match |
 | `meta` | Regex on `<meta>` tag content attribute | `version` regex on content value |
 | `cookies` | Cookie name existence, optional value regex | No |
-| `paths` | Navigate to path via browser, check status code. Response is added to the pool for body/headers/cookies/js checks | No |
+| `paths` | GET path via HTTP client (default) or browser (`browser: true`), check status code. Response is added to the pool for body/headers/cookies/js checks | No |
 | `js` | JS expression evaluated in browser context (main page + path pages) | If `version: true`, expression result is the version |
 | `favicon_hash` | mmh3 hash of the site favicon | No |
 
