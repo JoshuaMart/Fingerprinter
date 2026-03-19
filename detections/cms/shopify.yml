@@ -4,7 +4,7 @@ website: https://shopify.com
 checks:
   headers:
     x-shopify-stage:
-    x-powered-by:
+    powered-by:
       pattern: 'Shopify'
 
   meta:
