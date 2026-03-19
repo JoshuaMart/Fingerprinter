@@ -1,0 +1,25 @@
+name: Shopify
+category: E-commerce
+website: https://shopify.com
+checks:
+  headers:
+    x-shopify-stage:
+
+  meta:
+    shopify-checkout-api-token:
+    shopify-digital-wallet:
+
+  cookies:
+    _shopify_s:
+    _shopify_y:
+    _shopify_essential_:
+    _shopify_marketing:
+    _shopify_analytics:
+
+  body:
+    patterns:
+      - pattern: 'cdn\.shopify\.com'
+
+  js:
+    - expression: "typeof ShopifyAnalytics !== 'undefined'"
+    - expression: "typeof Shopify !== 'undefined' && typeof Shopify.shop !== 'undefined'"
