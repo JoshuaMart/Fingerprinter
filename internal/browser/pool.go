@@ -192,7 +192,7 @@ func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *N
 	}
 
 	// Set up network capture
-	capture := NewNetworkCapture(targetHost, targetURL)
+	capture := NewNetworkCapture(targetHost, targetURL, page.FrameID)
 
 	// Listen for network events
 	go page.EachEvent(
@@ -280,7 +280,7 @@ func (p *Pool) NavigateAndCapture(ctx context.Context, targetURL string) (*model
 		return nil, fmt.Errorf("enabling network domain: %w", err)
 	}
 
-	capture := NewNetworkCapture(targetHost, targetURL)
+	capture := NewNetworkCapture(targetHost, targetURL, page.FrameID)
 
 	go page.EachEvent(
 		func(e *proto.NetworkRequestWillBeSent) {
@@ -356,7 +356,7 @@ func (p *Pool) NavigateCaptureAndEval(ctx context.Context, targetURL string, jsE
 		return nil, nil, fmt.Errorf("enabling network domain: %w", err)
 	}
 
-	capture := NewNetworkCapture(targetHost, targetURL)
+	capture := NewNetworkCapture(targetHost, targetURL, page.FrameID)
 
 	go page.EachEvent(
 		func(e *proto.NetworkRequestWillBeSent) {

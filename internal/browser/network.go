@@ -19,6 +19,7 @@ type NetworkCapture struct {
 	webSockets    map[string]struct{}
 
 	mainRequestID proto.NetworkRequestID
+	mainFrameID   proto.PageFrameID
 	initialized   bool
 	redirectHops  []capturedResponse // hops from RedirectResponse
 	finalResponse *capturedResponse  // final response from responseReceived
@@ -32,9 +33,11 @@ type capturedResponse struct {
 }
 
 // NewNetworkCapture creates a new capture for the given target host and original URL.
-func NewNetworkCapture(targetHost, originalURL string) *NetworkCapture {
+// mainFrameID identifies the top-level frame so that iframe navigations are ignored.
+func NewNetworkCapture(targetHost, originalURL string, mainFrameID proto.PageFrameID) *NetworkCapture {
 	return &NetworkCapture{
 		targetHost:    targetHost,
+		mainFrameID:   mainFrameID,
 		externalHosts: make(map[string]struct{}),
 		webSockets:    make(map[string]struct{}),
 	}
@@ -59,21 +62,24 @@ func (nc *NetworkCapture) HandleRequestWillBeSent(e *proto.NetworkRequestWillBeS
 		nc.initialized = true
 	}
 
-	// If this event carries a RedirectResponse, capture the redirect hop.
+	// If this event carries a RedirectResponse, capture only main document redirects.
+	// Sub-resource redirects (CSS, JS, XHR) have a different requestID and must be ignored.
 	if e.RedirectResponse != nil {
-		nc.redirectHops = append(nc.redirectHops, capturedResponse{
-			url:        e.RedirectResponse.URL,
-			statusCode: e.RedirectResponse.Status,
-			headers:    cdpHeadersToHTTPHeader(e.RedirectResponse.Headers),
-			requestID:  e.RequestID,
-		})
+		if e.RequestID == nc.mainRequestID {
+			nc.redirectHops = append(nc.redirectHops, capturedResponse{
+				url:        e.RedirectResponse.URL,
+				statusCode: e.RedirectResponse.Status,
+				headers:    cdpHeadersToHTTPHeader(e.RedirectResponse.Headers),
+				requestID:  e.RequestID,
+			})
+		}
 		return
 	}
 
 	// New Document navigation (JS redirect: window.location, meta refresh, etc.)
 	// — different requestID means the browser started a new top-level navigation.
 	// Save the previous finalResponse as a hop and track the new request.
-	if e.Type == proto.NetworkResourceTypeDocument && e.RequestID != nc.mainRequestID {
+	if e.Type == proto.NetworkResourceTypeDocument && e.RequestID != nc.mainRequestID && e.FrameID == nc.mainFrameID {
 		if nc.finalResponse != nil {
 			nc.redirectHops = append(nc.redirectHops, *nc.finalResponse)
 			nc.finalResponse = nil
