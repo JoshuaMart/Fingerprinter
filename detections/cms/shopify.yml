@@ -4,6 +4,8 @@ website: https://shopify.com
 checks:
   headers:
     x-shopify-stage:
+    x-powered-by:
+      pattern: 'Shopify'
 
   meta:
     shopify-checkout-api-token:
