@@ -42,6 +42,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Configure log level from config (YAML + env override)
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.SlogLevel()})))
+
 	if portOverride > 0 {
 		cfg.Server.Port = portOverride
 	}

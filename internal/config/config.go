@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -10,6 +11,7 @@ import (
 )
 
 type Config struct {
+	LogLevel   string           `yaml:"log_level"`
 	Server     ServerConfig     `yaml:"server"`
 	Scanner    ScannerConfig    `yaml:"scanner"`
 	Browser    BrowserConfig    `yaml:"browser"`
@@ -141,6 +143,9 @@ func loadEnvOverrides(cfg *Config) {
 	if v := os.Getenv("FINGERPRINTER_REDIS_STREAM"); v != "" {
 		cfg.Redis.Stream = v
 	}
+	if v := os.Getenv("FINGERPRINTER_LOG_LEVEL"); v != "" {
+		cfg.LogLevel = v
+	}
 }
 
 func copyHeaders(src map[string]string) map[string]string {
@@ -152,6 +157,20 @@ func copyHeaders(src map[string]string) map[string]string {
 		dst[k] = v
 	}
 	return dst
+}
+
+// SlogLevel returns the slog.Level corresponding to the configured log level string.
+func (c *Config) SlogLevel() slog.Level {
+	switch c.LogLevel {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
 
 func validate(cfg *Config) error {
