@@ -221,7 +221,7 @@ func (s *Scanner) evalJS(page *rod.Page, expressions []string, results map[strin
 			continue
 		}
 		val := result.Value.String()
-		if val != "" {
+		if val != "" && val != "false" {
 			results[expr] = val
 			slog.Debug("JS pre-eval success", "expression", expr, "value", val)
 		}

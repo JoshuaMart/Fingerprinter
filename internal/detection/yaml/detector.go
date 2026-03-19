@@ -251,7 +251,7 @@ func matchMeta(metas map[string]string, metaName string, check MetaCheck) (strin
 }
 
 func matchCookie(cookies map[string]string, cookieName string, check CookieCheck) bool {
-	_, exists := cookies[cookieName]
+	value, exists := cookies[cookieName]
 	if !exists {
 		return false
 	}
@@ -263,7 +263,10 @@ func matchCookie(cookies map[string]string, cookieName string, check CookieCheck
 	if err != nil {
 		return false
 	}
-	return re.MatchString(cookies[cookieName])
+	if re.MatchString(value) {
+		return true
+	}
+	return false
 }
 
 func matchPath(navigator models.BrowserNavigator, baseURL string, check PathCheck, jsExprs []string) (*models.ChainedResponse, map[string]string, bool) {
@@ -325,6 +328,10 @@ func matchJSWithResults(jsResults map[string]string, ctx *models.DetectionContex
 			if check.Version {
 				return val, true
 			}
+			// Boolean check: "false" means the expression did not match
+			if val == "false" {
+				return "", false
+			}
 			return "", true
 		}
 	}
@@ -343,8 +350,13 @@ func matchJSWithResults(jsResults map[string]string, ctx *models.DetectionContex
 		return "", false
 	}
 
+	val := result.Value.String()
 	if check.Version {
-		return result.Value.String(), true
+		return val, true
+	}
+	// Boolean check: "false" means the expression did not match
+	if val == "false" {
+		return "", false
 	}
 	return "", true
 }

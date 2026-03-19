@@ -421,7 +421,11 @@ func (p *Pool) NavigateCaptureAndEval(ctx context.Context, targetURL string, jsE
 		if result == nil || result.Value.Nil() {
 			continue
 		}
-		jsResults[expr] = result.Value.String()
+		val := result.Value.String()
+		if val == "" || val == "false" {
+			continue
+		}
+		jsResults[expr] = val
 	}
 
 	return resp, jsResults, nil
