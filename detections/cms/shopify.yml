@@ -25,3 +25,4 @@ checks:
   js:
     - expression: "typeof ShopifyAnalytics !== 'undefined'"
     - expression: "typeof Shopify !== 'undefined' && typeof Shopify.shop !== 'undefined'"
+    - expression: "typeof ShopifyBuy !== 'undefined'"
