@@ -8,6 +8,7 @@ import (
 // All returns all built-in complex detectors.
 func All() []models.Detector {
 	return []models.Detector{
+		&cms.DrupalDetector{},
 		&cms.MagentoDetector{},
 		&cms.WordPressDetector{},
 	}
