@@ -18,10 +18,6 @@ checks:
     _shopify_marketing:
     _shopify_analytics:
 
-  body:
-    patterns:
-      - pattern: 'cdn\.shopify\.com'
-
   js:
     - expression: "typeof ShopifyAnalytics !== 'undefined'"
     - expression: "typeof Shopify !== 'undefined' && typeof Shopify.shop !== 'undefined'"
