@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -100,6 +101,13 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 	// can open separate pages while the main page is still available for JS eval.
 	var result *models.ScanResult
 
+	// Extract target host for scope checks
+	parsedReqURL, _ := url.Parse(req.URL)
+	targetHost := ""
+	if parsedReqURL != nil {
+		targetHost = parsedReqURL.Hostname()
+	}
+
 	err := s.browserPool.Navigate(ctx, req.URL, func(navResult *browser.NavigateResult) error {
 		responses := navResult.Chain
 		if len(responses) == 0 {
@@ -110,44 +118,55 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 		baseURL := finalResp.URL
 
 		// Extract rendered HTML for goquery document
+		// Skip if external redirect — the page content belongs to the external host
 		var doc *goquery.Document
-		renderedHTML, htmlErr := navResult.Page.HTML()
-		if htmlErr != nil {
-			slog.Warn("failed to extract rendered HTML", "error", htmlErr)
-		} else {
-			rendered := []byte(renderedHTML)
-			if len(rendered) > len(finalResp.Body) {
-				finalResp.Body = rendered
-				finalResp.ResponseSize = len(rendered)
-			}
-			var parseErr error
-			doc, parseErr = goquery.NewDocumentFromReader(bytes.NewReader(rendered))
-			if parseErr != nil {
-				slog.Warn("DOM parsing failed, continuing without document", "error", parseErr)
+		if !navResult.ExternalRedirect {
+			renderedHTML, htmlErr := navResult.Page.HTML()
+			if htmlErr != nil {
+				slog.Warn("failed to extract rendered HTML", "error", htmlErr)
+			} else {
+				rendered := []byte(renderedHTML)
+				if len(rendered) > len(finalResp.Body) {
+					finalResp.Body = rendered
+					finalResp.ResponseSize = len(rendered)
+				}
+				var parseErr error
+				doc, parseErr = goquery.NewDocumentFromReader(bytes.NewReader(rendered))
+				if parseErr != nil {
+					slog.Warn("DOM parsing failed, continuing without document", "error", parseErr)
+				}
 			}
 		}
 
 		// Pre-evaluate JS expressions while page is alive
+		// Skip if external redirect — JS context belongs to the external host
 		jsResults := make(map[string]string)
 		jsExpressions := s.engine.CollectJSExpressions()
-		s.evalJS(navResult.Page, jsExpressions, jsResults)
+		if !navResult.ExternalRedirect {
+			s.evalJS(navResult.Page, jsExpressions, jsResults)
+		}
 
 		// 404 probe via browser (separate page) — also evaluate JS on the 404 page
 		detResponses := make([]models.ChainedResponse, len(responses))
 		copy(detResponses, responses)
-		if req.Options == nil || !req.Options.SkipPathChecks {
+		skipPaths := (req.Options != nil && req.Options.SkipPathChecks) || navResult.ExternalRedirect
+		if !skipPaths {
 			if notFound, probeJS, probeErr := s.probe404(ctx, baseURL, jsExpressions); probeErr == nil {
-				detResponses = append(detResponses, *notFound)
-				for k, v := range probeJS {
-					if _, exists := jsResults[k]; !exists {
-						jsResults[k] = v
+				// Verify the 404 response is in-scope
+				if parsed, err := url.Parse(notFound.URL); err == nil && parsed.Hostname() == targetHost {
+					detResponses = append(detResponses, *notFound)
+					for k, v := range probeJS {
+						if _, exists := jsResults[k]; !exists {
+							jsResults[k] = v
+						}
 					}
+				} else {
+					slog.Debug("404 probe redirected to external host, discarding", "url", notFound.URL)
 				}
 			}
 		}
 
 		// Detections (parallel, handled by engine)
-		skipPaths := req.Options != nil && req.Options.SkipPathChecks
 		detCtx := &models.DetectionContext{
 			Responses:      detResponses,
 			Document:       doc,

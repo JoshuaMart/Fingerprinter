@@ -162,10 +162,11 @@ func (p *Pool) setExtraHeaders(page *rod.Page) error {
 
 // NavigateResult holds the output of a browser navigation.
 type NavigateResult struct {
-	Page          *rod.Page
-	ExternalHosts []string
-	WebSockets    []string
-	Chain         []models.ChainedResponse
+	Page             *rod.Page
+	ExternalHosts    []string
+	WebSockets       []string
+	Chain            []models.ChainedResponse
+	ExternalRedirect bool
 }
 
 // Navigate opens a URL in a fresh page, captures the redirect chain via CDP Network
@@ -220,13 +221,14 @@ func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *N
 	wait()
 
 	// Check for client-side redirect to a different host
+	externalRedirect := false
 	info, err := page.Info()
 	if err == nil {
 		if parsed, parseErr := url.Parse(info.URL); parseErr == nil {
 			if parsed.Hostname() != targetHost {
-				slog.Warn("browser redirected to external host, ignoring",
+				slog.Warn("browser redirected to external host",
 					"from", targetHost, "to", parsed.Hostname())
-				return nil
+				externalRedirect = true
 			}
 		}
 	}
@@ -237,11 +239,20 @@ func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *N
 		slog.Warn("failed to build full chain, using partial", "error", err)
 	}
 
+	// Truncate trailing out-of-scope responses
+	if externalRedirect {
+		chainResponses = truncateOutOfScope(chainResponses, targetHost)
+		if len(chainResponses) == 0 {
+			return fmt.Errorf("redirected to external host with no in-scope responses")
+		}
+	}
+
 	result := &NavigateResult{
-		Page:          page,
-		ExternalHosts: capture.ExternalHosts(),
-		WebSockets:    capture.WebSockets(),
-		Chain:         chainResponses,
+		Page:             page,
+		ExternalHosts:    capture.ExternalHosts(),
+		WebSockets:       capture.WebSockets(),
+		Chain:            chainResponses,
+		ExternalRedirect: externalRedirect,
 	}
 
 	return fn(result)
@@ -414,6 +425,18 @@ func (p *Pool) NavigateCaptureAndEval(ctx context.Context, targetURL string, jsE
 	}
 
 	return resp, jsResults, nil
+}
+
+// truncateOutOfScope removes trailing responses whose hostname differs from targetHost.
+func truncateOutOfScope(chain []models.ChainedResponse, targetHost string) []models.ChainedResponse {
+	for len(chain) > 0 {
+		last := chain[len(chain)-1]
+		if parsed, err := url.Parse(last.URL); err == nil && parsed.Hostname() == targetHost {
+			break
+		}
+		chain = chain[:len(chain)-1]
+	}
+	return chain
 }
 
 // buildChain converts captured network events into []models.ChainedResponse.
