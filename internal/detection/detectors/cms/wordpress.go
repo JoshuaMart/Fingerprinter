@@ -26,7 +26,8 @@ var (
 	wpMetaGeneratorRe = regexp.MustCompile(`(?i)WordPress`)
 	wpMetaVersionRe   = regexp.MustCompile(`([\d.]+)`)
 
-	wpFeedVersionRe = regexp.MustCompile(`version="([\d.]+)"`)
+	wpFeedVersionRe = regexp.MustCompile(`<generator[^>]+version="([\d.]+)"`)
+
 	wpOPMLVersionRe = regexp.MustCompile(`WordPress/([\d.]+)`)
 )
 
