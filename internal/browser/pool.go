@@ -167,6 +167,7 @@ type NavigateResult struct {
 	WebSockets       []string
 	Chain            []models.ChainedResponse
 	ExternalRedirect bool
+	BrowserCookies   map[string]string // Cookies from browser cookie jar (name → value)
 }
 
 // Navigate opens a URL in a fresh page, captures the redirect chain via CDP Network
@@ -184,7 +185,7 @@ func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *N
 	}
 	defer func() { _ = page.Close() }()
 
-	page = page.Context(ctx).Timeout(p.pageTimeout)
+	page = page.Context(ctx)
 
 	// Enable Network domain for CDP event capture
 	if err := (proto.NetworkEnable{}).Call(page); err != nil {
@@ -207,18 +208,24 @@ func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *N
 		},
 	)()
 
-	if err := page.Navigate(targetURL); err != nil {
+	// Use page timeout only for navigation + wait phases
+	navPage := page.Timeout(p.pageTimeout)
+
+	if err := navPage.Navigate(targetURL); err != nil {
 		return fmt.Errorf("navigating to %s: %w", targetURL, err)
 	}
 
 	// Wait for page to be ready
-	if err := page.WaitLoad(); err != nil {
+	if err := navPage.WaitLoad(); err != nil {
 		slog.Warn("page WaitLoad failed, continuing", "url", targetURL, "error", err)
 	}
 
 	// Wait for network to settle (scripts, XHR, etc.)
-	wait := page.WaitRequestIdle(time.Second, nil, nil, nil)
+	wait := navPage.WaitRequestIdle(time.Second, nil, nil, nil)
 	wait()
+
+	// Post-navigation operations use the parent context (not the page timeout)
+	// so they don't fail if navigation consumed the entire page_timeout budget.
 
 	// Check for client-side redirect to a different host
 	externalRedirect := false
@@ -247,12 +254,25 @@ func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *N
 		}
 	}
 
+	// Extract cookies from browser cookie jar (CDP doesn't expose Set-Cookie headers)
+	browserCookies := make(map[string]string)
+	cookies, err := page.Cookies(nil)
+	if err != nil {
+		slog.Warn("failed to extract browser cookies", "error", err)
+	} else {
+		slog.Debug("browser cookies extracted", "count", len(cookies))
+		for _, c := range cookies {
+			browserCookies[c.Name] = c.Value
+		}
+	}
+
 	result := &NavigateResult{
 		Page:             page,
 		ExternalHosts:    capture.ExternalHosts(),
 		WebSockets:       capture.WebSockets(),
 		Chain:            chainResponses,
 		ExternalRedirect: externalRedirect,
+		BrowserCookies:   browserCookies,
 	}
 
 	return fn(result)
@@ -273,7 +293,7 @@ func (p *Pool) NavigateAndCapture(ctx context.Context, targetURL string) (*model
 	}
 	defer func() { _ = page.Close() }()
 
-	page = page.Context(ctx).Timeout(p.pageTimeout)
+	page = page.Context(ctx)
 
 	// Enable Network domain
 	if err := (proto.NetworkEnable{}).Call(page); err != nil {
@@ -294,11 +314,13 @@ func (p *Pool) NavigateAndCapture(ctx context.Context, targetURL string) (*model
 		},
 	)()
 
-	if err := page.Navigate(targetURL); err != nil {
+	navPage := page.Timeout(p.pageTimeout)
+
+	if err := navPage.Navigate(targetURL); err != nil {
 		return nil, fmt.Errorf("navigating to %s: %w", targetURL, err)
 	}
 
-	if err := page.WaitLoad(); err != nil {
+	if err := navPage.WaitLoad(); err != nil {
 		slog.Warn("page WaitLoad failed", "url", targetURL, "error", err)
 	}
 
@@ -350,7 +372,7 @@ func (p *Pool) NavigateCaptureAndEval(ctx context.Context, targetURL string, jsE
 	}
 	defer func() { _ = page.Close() }()
 
-	page = page.Context(ctx).Timeout(p.pageTimeout)
+	page = page.Context(ctx)
 
 	if err := (proto.NetworkEnable{}).Call(page); err != nil {
 		return nil, nil, fmt.Errorf("enabling network domain: %w", err)
@@ -370,16 +392,18 @@ func (p *Pool) NavigateCaptureAndEval(ctx context.Context, targetURL string, jsE
 		},
 	)()
 
-	if err := page.Navigate(targetURL); err != nil {
+	navPage := page.Timeout(p.pageTimeout)
+
+	if err := navPage.Navigate(targetURL); err != nil {
 		return nil, nil, fmt.Errorf("navigating to %s: %w", targetURL, err)
 	}
 
-	if err := page.WaitLoad(); err != nil {
+	if err := navPage.WaitLoad(); err != nil {
 		slog.Warn("page WaitLoad failed", "url", targetURL, "error", err)
 	}
 
 	// Wait for network to settle (scripts, XHR, etc.) before evaluating JS
-	wait := page.WaitRequestIdle(time.Second, nil, nil, nil)
+	wait := navPage.WaitRequestIdle(time.Second, nil, nil, nil)
 	wait()
 
 	chain := capture.Chain()
