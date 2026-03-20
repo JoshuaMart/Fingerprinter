@@ -54,7 +54,7 @@ func (d *WordPressDetector) JSExpressions() []string { return wpJSExpressions }
 func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.DetectionResult, error) {
 	detected := false
 	version := ""
-	var evidence []string
+	proof := &models.Proof{}
 
 	// 1. Headers
 	for _, resp := range ctx.Responses {
@@ -63,19 +63,19 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 				version = m[1]
 			}
 			detected = true
-			evidence = appendUnique(evidence, "headers: x-wordpress-version")
+			proof.Headers = appendUniqueStr(proof.Headers, "x-wordpress-version")
 		}
 		if v := resp.RawHeaders.Get("link"); v != "" && wpLinkAPIRe.MatchString(v) {
 			detected = true
-			evidence = appendUnique(evidence, "headers: link api.w.org")
+			proof.Headers = appendUniqueStr(proof.Headers, "link")
 		}
 		if v := resp.RawHeaders.Get("x-pingback"); v != "" && wpPingbackRe.MatchString(v) {
 			detected = true
-			evidence = appendUnique(evidence, "headers: x-pingback")
+			proof.Headers = appendUniqueStr(proof.Headers, "x-pingback")
 		}
 		if v := resp.RawHeaders.Get("x-powered-by"); v != "" && wpPoweredByRe.MatchString(v) {
 			detected = true
-			evidence = appendUnique(evidence, "headers: x-powered-by")
+			proof.Headers = appendUniqueStr(proof.Headers, "x-powered-by")
 		}
 	}
 
@@ -85,14 +85,14 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 		for _, re := range wpBodyPatterns {
 			if re.Match(body) {
 				detected = true
-				evidence = appendUnique(evidence, "body: wp-content")
+				proof.Body = appendUniqueStr(proof.Body, re.String())
 			}
 		}
 		if version == "" {
 			if m := wpEmbedVersionRe.FindSubmatch(body); m != nil {
 				version = string(m[1])
 				detected = true
-				evidence = appendUnique(evidence, "body: wp-embed version")
+				proof.Body = appendUniqueStr(proof.Body, wpEmbedVersionRe.String())
 			}
 		}
 	}
@@ -102,7 +102,7 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 		metas := chain.ExtractMeta(ctx.Document)
 		if gen, ok := metas["generator"]; ok && wpMetaGeneratorRe.MatchString(gen) {
 			detected = true
-			evidence = appendUnique(evidence, "meta: generator")
+			proof.Meta = appendUniqueStr(proof.Meta, "generator")
 			if version == "" {
 				if m := wpMetaVersionRe.FindStringSubmatch(gen); m != nil {
 					version = m[1]
@@ -117,7 +117,7 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 		for _, prefix := range wpCookieNames {
 			if strings.HasPrefix(cookieName, prefix) {
 				detected = true
-				evidence = appendUnique(evidence, "cookies: "+prefix)
+				proof.Cookies = appendUniqueStr(proof.Cookies, prefix)
 			}
 		}
 	}
@@ -126,7 +126,7 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 	for _, expr := range wpJSExpressions {
 		if v, ok := ctx.JSResults[expr]; ok && v != "" && v != "false" && v != "undefined" && v != "null" {
 			detected = true
-			evidence = appendUnique(evidence, "js: wp object")
+			proof.JS = appendUniqueStr(proof.JS, expr)
 		}
 	}
 
@@ -139,7 +139,7 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 		if err == nil && resp.StatusCode == 200 {
 			if m := wpFeedVersionRe.FindSubmatch(resp.Body); m != nil {
 				version = string(m[1])
-				evidence = appendUnique(evidence, "probe: feed=atom")
+				proof.Probe = append(proof.Probe, "feed=atom")
 			}
 		}
 
@@ -149,7 +149,7 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 			if err == nil && resp.StatusCode == 200 {
 				if m := wpOPMLVersionRe.FindSubmatch(resp.Body); m != nil {
 					version = string(m[1])
-					evidence = appendUnique(evidence, "probe: wp-links-opml")
+					proof.Probe = append(proof.Probe, "wp-links-opml")
 				}
 			}
 		}
@@ -162,11 +162,11 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 	return &models.DetectionResult{
 		Detected: true,
 		Version:  version,
-		Evidence: strings.Join(evidence, ", "),
+		Proof:    proof,
 	}, nil
 }
 
-func appendUnique(slice []string, val string) []string {
+func appendUniqueStr(slice []string, val string) []string {
 	for _, s := range slice {
 		if s == val {
 			return slice

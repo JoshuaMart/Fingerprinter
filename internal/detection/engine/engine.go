@@ -116,6 +116,7 @@ func aggregate(results chan detectionEntry) []models.Technology {
 			Name:     entry.name,
 			Category: entry.category,
 			Version:  entry.result.Version,
+			Proof:    entry.result.Proof,
 		}
 	}
 

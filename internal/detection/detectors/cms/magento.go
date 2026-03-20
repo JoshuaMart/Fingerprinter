@@ -44,7 +44,7 @@ func (d *MagentoDetector) Name() string     { return "Magento" }
 func (d *MagentoDetector) Category() string { return "E-commerce" }
 
 func (d *MagentoDetector) Detect(ctx *models.DetectionContext) (*models.DetectionResult, error) {
-	detected := &models.DetectionResult{Detected: true}
+	proof := &models.Proof{}
 	cheapMatch := false
 
 	// Header checks (cheap)
@@ -52,6 +52,7 @@ func (d *MagentoDetector) Detect(ctx *models.DetectionContext) (*models.Detectio
 		for _, resp := range ctx.Responses {
 			if value := resp.RawHeaders.Get(headerName); value != "" && re.MatchString(value) {
 				cheapMatch = true
+				proof.Headers = appendUniqueStr(proof.Headers, headerName)
 			}
 		}
 	}
@@ -61,6 +62,7 @@ func (d *MagentoDetector) Detect(ctx *models.DetectionContext) (*models.Detectio
 		for _, resp := range ctx.Responses {
 			if re.Match(resp.Body) {
 				cheapMatch = true
+				proof.Body = appendUniqueStr(proof.Body, re.String())
 			}
 		}
 	}
@@ -68,15 +70,17 @@ func (d *MagentoDetector) Detect(ctx *models.DetectionContext) (*models.Detectio
 	// Meta content check (cheap)
 	if ctx.Document != nil && matchMagentoMeta(ctx.Document) {
 		cheapMatch = true
+		proof.Meta = append(proof.Meta, "generator")
 	}
 
 	if cheapMatch {
-		return detected, nil
+		return &models.DetectionResult{Detected: true, Proof: proof}, nil
 	}
 
 	// GraphQL endpoint check (expensive — only if no cheap check matched)
 	if !ctx.SkipPathChecks && checkMagentoGraphQL(ctx.HTTPClient, ctx.BaseURL) {
-		return detected, nil
+		proof.Probe = append(proof.Probe, "graphql")
+		return &models.DetectionResult{Detected: true, Proof: proof}, nil
 	}
 
 	return &models.DetectionResult{Detected: false}, nil

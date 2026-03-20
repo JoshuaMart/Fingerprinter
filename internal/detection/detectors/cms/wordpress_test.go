@@ -326,7 +326,7 @@ func TestWordPressJSExpressions(t *testing.T) {
 	}
 }
 
-func TestWordPressEvidence(t *testing.T) {
+func TestWordPressProof(t *testing.T) {
 	det := &WordPressDetector{}
 	doc, _ := goquery.NewDocumentFromReader(strings.NewReader(
 		`<html><head><meta name="generator" content="WordPress 6.5.0"></head></html>`,
@@ -351,13 +351,25 @@ func TestWordPressEvidence(t *testing.T) {
 	if !res.Detected {
 		t.Fatal("expected WordPress detected")
 	}
-	if !strings.Contains(res.Evidence, "headers: link api.w.org") {
-		t.Errorf("evidence missing header link, got: %s", res.Evidence)
+	if res.Proof == nil {
+		t.Fatal("expected proof to be set")
 	}
-	if !strings.Contains(res.Evidence, "body: wp-content") {
-		t.Errorf("evidence missing body, got: %s", res.Evidence)
+	if !containsStr(res.Proof.Headers, "link") {
+		t.Errorf("proof missing header link, got: %v", res.Proof.Headers)
 	}
-	if !strings.Contains(res.Evidence, "meta: generator") {
-		t.Errorf("evidence missing meta, got: %s", res.Evidence)
+	if len(res.Proof.Body) == 0 {
+		t.Errorf("proof missing body evidence, got: %v", res.Proof.Body)
 	}
+	if !containsStr(res.Proof.Meta, "generator") {
+		t.Errorf("proof missing meta generator, got: %v", res.Proof.Meta)
+	}
+}
+
+func containsStr(slice []string, val string) bool {
+	for _, s := range slice {
+		if s == val {
+			return true
+		}
+	}
+	return false
 }

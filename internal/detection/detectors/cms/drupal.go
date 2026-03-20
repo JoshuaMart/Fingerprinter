@@ -53,14 +53,14 @@ func (d *DrupalDetector) JSExpressions() []string { return drupalJSExpressions }
 func (d *DrupalDetector) Detect(ctx *models.DetectionContext) (*models.DetectionResult, error) {
 	detected := false
 	version := ""
-	var evidence []string
+	proof := &models.Proof{}
 
 	// 1. Headers
 	for _, resp := range ctx.Responses {
 		// X-Generator: Drupal 10 (https://www.drupal.org)
 		if v := resp.RawHeaders.Get("x-generator"); v != "" && drupalHeaderGeneratorRe.MatchString(v) {
 			detected = true
-			evidence = appendUnique(evidence, "headers: x-generator")
+			proof.Headers = appendUniqueStr(proof.Headers, "x-generator")
 			if version == "" {
 				if m := drupalHeaderVersionRe.FindStringSubmatch(v); m != nil {
 					version = m[1]
@@ -72,14 +72,14 @@ func (d *DrupalDetector) Detect(ctx *models.DetectionContext) (*models.Detection
 		for _, h := range drupalDetectionHeaders {
 			if v := resp.RawHeaders.Get(h); v != "" {
 				detected = true
-				evidence = appendUnique(evidence, "headers: "+h)
+				proof.Headers = appendUniqueStr(proof.Headers, h)
 			}
 		}
 
 		// Expires: 19 Nov 1978 (Drupal's famous birth date)
 		if v := resp.RawHeaders.Get("expires"); strings.Contains(v, "19 Nov 1978") {
 			detected = true
-			evidence = appendUnique(evidence, "headers: expires")
+			proof.Headers = appendUniqueStr(proof.Headers, "expires")
 		}
 	}
 
@@ -88,14 +88,14 @@ func (d *DrupalDetector) Detect(ctx *models.DetectionContext) (*models.Detection
 		for _, re := range drupalBodyPatterns {
 			if re.Match(resp.Body) {
 				detected = true
-				evidence = appendUnique(evidence, "body: drupal pattern")
+				proof.Body = appendUniqueStr(proof.Body, re.String())
 			}
 		}
 		if version == "" {
 			if m := drupalBodyVersionRe.FindSubmatch(resp.Body); m != nil {
 				version = string(m[1])
 				detected = true
-				evidence = appendUnique(evidence, "body: drupal.js version")
+				proof.Body = appendUniqueStr(proof.Body, drupalBodyVersionRe.String())
 			}
 		}
 	}
@@ -105,7 +105,7 @@ func (d *DrupalDetector) Detect(ctx *models.DetectionContext) (*models.Detection
 		metas := chain.ExtractMeta(ctx.Document)
 		if gen, ok := metas["generator"]; ok && drupalMetaGeneratorRe.MatchString(gen) {
 			detected = true
-			evidence = appendUnique(evidence, "meta: generator")
+			proof.Meta = appendUniqueStr(proof.Meta, "generator")
 			if version == "" {
 				if m := drupalMetaVersionRe.FindStringSubmatch(gen); m != nil {
 					version = m[1]
@@ -119,7 +119,7 @@ func (d *DrupalDetector) Detect(ctx *models.DetectionContext) (*models.Detection
 	for cookieName := range cookies {
 		if drupalCookieRe.MatchString(cookieName) {
 			detected = true
-			evidence = appendUnique(evidence, "cookies: SESS")
+			proof.Cookies = appendUniqueStr(proof.Cookies, cookieName)
 		}
 	}
 
@@ -127,13 +127,13 @@ func (d *DrupalDetector) Detect(ctx *models.DetectionContext) (*models.Detection
 	for _, expr := range drupalJSExpressions {
 		if v, ok := ctx.JSResults[expr]; ok && v != "" && v != "false" && v != "undefined" && v != "null" {
 			detected = true
-			evidence = appendUnique(evidence, "js: Drupal object")
+			proof.JS = appendUniqueStr(proof.JS, expr)
 		}
 	}
 
 	// 6. Path probes for version (only if detected but no version)
 	if detected && version == "" && !ctx.SkipPathChecks && ctx.BrowserPool != nil && ctx.BaseURL != "" {
-		version = d.probeVersion(ctx, &evidence)
+		version = d.probeVersion(ctx, proof)
 	}
 
 	if !detected {
@@ -143,18 +143,18 @@ func (d *DrupalDetector) Detect(ctx *models.DetectionContext) (*models.Detection
 	return &models.DetectionResult{
 		Detected: true,
 		Version:  version,
-		Evidence: strings.Join(evidence, ", "),
+		Proof:    proof,
 	}, nil
 }
 
-func (d *DrupalDetector) probeVersion(ctx *models.DetectionContext, evidence *[]string) string {
+func (d *DrupalDetector) probeVersion(ctx *models.DetectionContext, proof *models.Proof) string {
 	base := strings.TrimRight(ctx.BaseURL, "/")
 
 	// CHANGELOG.txt (Drupal 7 and older)
 	resp, err := ctx.BrowserPool.NavigateAndCapture(context.Background(), base+"/CHANGELOG.txt")
 	if err == nil && resp.StatusCode == 200 {
 		if m := drupalChangelogVersionRe.FindSubmatch(resp.Body); m != nil {
-			*evidence = appendUnique(*evidence, "probe: CHANGELOG.txt")
+			proof.Probe = append(proof.Probe, "CHANGELOG.txt")
 			return string(m[1])
 		}
 	}
@@ -163,7 +163,7 @@ func (d *DrupalDetector) probeVersion(ctx *models.DetectionContext, evidence *[]
 	resp, err = ctx.BrowserPool.NavigateAndCapture(context.Background(), base+"/core/install.php")
 	if err == nil && resp.StatusCode == 200 {
 		if m := drupalInstallVersionRe.FindSubmatch(resp.Body); m != nil {
-			*evidence = appendUnique(*evidence, "probe: core/install.php")
+			proof.Probe = append(proof.Probe, "core/install.php")
 			return string(m[1])
 		}
 	}
@@ -172,7 +172,7 @@ func (d *DrupalDetector) probeVersion(ctx *models.DetectionContext, evidence *[]
 	resp, err = ctx.BrowserPool.NavigateAndCapture(context.Background(), base+"/core/CHANGELOG.txt")
 	if err == nil && resp.StatusCode == 200 {
 		if m := drupalCoreChangelogVersionRe.FindSubmatch(resp.Body); m != nil {
-			*evidence = appendUnique(*evidence, "probe: core/CHANGELOG.txt")
+			proof.Probe = append(proof.Probe, "core/CHANGELOG.txt")
 			return string(m[1])
 		}
 	}

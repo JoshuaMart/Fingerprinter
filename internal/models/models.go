@@ -45,11 +45,28 @@ type ChainedResponse struct {
 	ResponseSize int               `json:"response_size"`
 }
 
+// Proof contains structured evidence of what triggered a detection.
+type Proof struct {
+	Headers []string `json:"headers,omitempty"`
+	Cookies []string `json:"cookies,omitempty"`
+	Body    []string `json:"body,omitempty"`
+	Meta    []string `json:"meta,omitempty"`
+	JS      []string `json:"js,omitempty"`
+	Favicon []int32  `json:"favicon,omitempty"`
+	Probe   []string `json:"probe,omitempty"`
+}
+
+// HasEvidence returns true if any proof field is populated.
+func (p *Proof) HasEvidence() bool {
+	return len(p.Headers)+len(p.Cookies)+len(p.Body)+len(p.Meta)+len(p.JS)+len(p.Favicon)+len(p.Probe) > 0
+}
+
 // Technology represents a detected technology.
 type Technology struct {
 	Name     string `json:"name"`
 	Version  string `json:"version,omitempty"`
 	Category string `json:"category"`
+	Proof    *Proof `json:"proof,omitempty"`
 }
 
 // ScanMetadata holds additional metadata about the target.
@@ -89,5 +106,5 @@ type Detector interface {
 type DetectionResult struct {
 	Detected bool   `json:"detected"`
 	Version  string `json:"version,omitempty"`
-	Evidence string `json:"evidence,omitempty"`
+	Proof    *Proof `json:"proof,omitempty"`
 }

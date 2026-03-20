@@ -391,7 +391,7 @@ func TestDrupalNoProbeWhenSkipPathChecks(t *testing.T) {
 	}
 }
 
-func TestDrupalEvidence(t *testing.T) {
+func TestDrupalProof(t *testing.T) {
 	det := &DrupalDetector{}
 	doc, _ := goquery.NewDocumentFromReader(strings.NewReader(
 		`<html><head><meta name="generator" content="Drupal 10 (https://www.drupal.org)"></head></html>`,
@@ -416,14 +416,17 @@ func TestDrupalEvidence(t *testing.T) {
 	if !res.Detected {
 		t.Fatal("expected Drupal detected")
 	}
-	if !strings.Contains(res.Evidence, "headers: x-drupal-cache") {
-		t.Errorf("evidence missing header, got: %s", res.Evidence)
+	if res.Proof == nil {
+		t.Fatal("expected proof to be set")
 	}
-	if !strings.Contains(res.Evidence, "body: drupal pattern") {
-		t.Errorf("evidence missing body, got: %s", res.Evidence)
+	if !containsStr(res.Proof.Headers, "x-drupal-cache") {
+		t.Errorf("proof missing header x-drupal-cache, got: %v", res.Proof.Headers)
 	}
-	if !strings.Contains(res.Evidence, "meta: generator") {
-		t.Errorf("evidence missing meta, got: %s", res.Evidence)
+	if len(res.Proof.Body) == 0 {
+		t.Errorf("proof missing body evidence, got: %v", res.Proof.Body)
+	}
+	if !containsStr(res.Proof.Meta, "generator") {
+		t.Errorf("proof missing meta generator, got: %v", res.Proof.Meta)
 	}
 }
 

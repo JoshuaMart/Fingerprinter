@@ -2,7 +2,6 @@ package yaml
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -37,6 +36,7 @@ func (d *Detector) JSExpressions() []string {
 
 // Detect runs all checks defined in the YAML and returns a result.
 func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult, error) {
+	proof := &models.Proof{}
 	var matches int
 	var total int
 	var version string
@@ -86,6 +86,7 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 		total++
 		if v, ok := matchHeaders(allResponses, headerName, check); ok {
 			matches++
+			proof.Headers = append(proof.Headers, headerName)
 			if v != "" && version == "" {
 				version = v
 			}
@@ -99,8 +100,10 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 			// All patterns must match — counts as a single check
 			total++
 			allMatched := true
+			var matchedPatterns []string
 			for _, check := range bodyChecks.Patterns {
 				if v, ok := matchBody(allResponses, check); ok {
+					matchedPatterns = append(matchedPatterns, check.Pattern)
 					if v != "" && version == "" {
 						version = v
 					}
@@ -110,6 +113,7 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 			}
 			if allMatched {
 				matches++
+				proof.Body = append(proof.Body, matchedPatterns...)
 			}
 		} else {
 			// Any pattern can match (default) — each pattern is an independent check
@@ -117,6 +121,7 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 				total++
 				if v, ok := matchBody(allResponses, check); ok {
 					matches++
+					proof.Body = append(proof.Body, check.Pattern)
 					if v != "" && version == "" {
 						version = v
 					}
@@ -132,6 +137,7 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 			total++
 			if v, ok := matchMeta(metas, metaName, check); ok {
 				matches++
+				proof.Meta = append(proof.Meta, metaName)
 				if v != "" && version == "" {
 					version = v
 				}
@@ -146,6 +152,7 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 			total++
 			if matchCookie(cookies, cookieName, check) {
 				matches++
+				proof.Cookies = append(proof.Cookies, cookieName)
 			}
 		}
 	}
@@ -170,6 +177,7 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 		total++
 		if v, ok := matchJSWithResults(allJSResults, ctx, check); ok {
 			matches++
+			proof.JS = append(proof.JS, check.Expression)
 			if v != "" && version == "" {
 				version = v
 			}
@@ -183,6 +191,7 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 			for _, expected := range d.def.Checks.FaviconHash {
 				if hash == expected {
 					matches++
+					proof.Favicon = append(proof.Favicon, hash)
 					break
 				}
 			}
@@ -196,7 +205,7 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 	return &models.DetectionResult{
 		Detected: true,
 		Version:  version,
-		Evidence: fmt.Sprintf("%d/%d checks matched", matches, total),
+		Proof:    proof,
 	}, nil
 }
 

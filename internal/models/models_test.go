@@ -148,7 +148,7 @@ func TestDetectionResultJSON(t *testing.T) {
 	dr := DetectionResult{
 		Detected: true,
 		Version:  "6.3.1",
-		Evidence: "meta generator tag",
+		Proof:    &Proof{Meta: []string{"generator"}},
 	}
 
 	data, err := json.Marshal(dr)

@@ -580,8 +580,8 @@ func TestCheckPathResponseFeedsBodyCheck(t *testing.T) {
 	if !res.Detected {
 		t.Error("expected detection: body check should match against path response")
 	}
-	if res.Evidence != "1/1 checks matched" {
-		t.Errorf("expected 1/1 checks matched, got %q", res.Evidence)
+	if res.Proof == nil || len(res.Proof.Body) != 1 || res.Proof.Body[0] != "swagger-ui" {
+		t.Errorf("expected proof with body [swagger-ui], got %+v", res.Proof)
 	}
 }
 
