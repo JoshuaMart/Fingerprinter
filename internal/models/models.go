@@ -93,6 +93,7 @@ type DetectionContext struct {
 	BaseURL        string
 	SkipPathChecks bool
 	JSResults      map[string]string // Pre-evaluated JS expression results (expression → value)
+	Cookies        map[string]string // Cookies from browser cookie jar + Set-Cookie headers
 }
 
 // Detector is the interface for complex Go-based detectors.

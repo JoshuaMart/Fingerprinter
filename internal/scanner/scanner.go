@@ -166,6 +166,14 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 			}
 		}
 
+		// Build merged cookie map for detectors (CDP headers + browser cookie jar)
+		detCookies := chain.ExtractCookies(detResponses)
+		for k, v := range navResult.BrowserCookies {
+			if _, exists := detCookies[k]; !exists {
+				detCookies[k] = v
+			}
+		}
+
 		// Detections (parallel, handled by engine)
 		detCtx := &models.DetectionContext{
 			Responses:      detResponses,
@@ -174,14 +182,20 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 			BrowserPool:    s.browserPool,
 			BrowserPage:    navResult.Page,
 			JSResults:      jsResults,
+			Cookies:        detCookies,
 			BaseURL:        baseURL,
 			SkipPathChecks: skipPaths,
 		}
 
 		technologies := s.engine.Run(detCtx)
 
-		// Metadata (HTTP — robots.txt, sitemap, favicon)
+		// Cookies: merge CDP headers (if any) with browser cookie jar
 		cookies := chain.ExtractCookies(responses)
+		for k, v := range navResult.BrowserCookies {
+			if _, exists := cookies[k]; !exists {
+				cookies[k] = v
+			}
+		}
 		var scanMeta *models.ScanMetadata
 		if !skipPaths {
 			scanMeta = metadata.Fetch(s.httpClient, baseURL, doc)

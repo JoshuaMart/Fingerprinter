@@ -115,7 +115,10 @@ func (d *DrupalDetector) Detect(ctx *models.DetectionContext) (*models.Detection
 	}
 
 	// 4. Cookies (SESS + 32 hex chars)
-	cookies := chain.ExtractCookies(ctx.Responses)
+	cookies := ctx.Cookies
+	if cookies == nil {
+		cookies = chain.ExtractCookies(ctx.Responses)
+	}
 	for cookieName := range cookies {
 		if drupalCookieRe.MatchString(cookieName) {
 			detected = true

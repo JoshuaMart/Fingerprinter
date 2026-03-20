@@ -112,7 +112,10 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 	}
 
 	// 4. Cookies (prefix match — e.g. wp-settings-1 matches wp-settings)
-	cookies := chain.ExtractCookies(ctx.Responses)
+	cookies := ctx.Cookies
+	if cookies == nil {
+		cookies = chain.ExtractCookies(ctx.Responses)
+	}
 	for cookieName := range cookies {
 		for _, prefix := range wpCookieNames {
 			if strings.HasPrefix(cookieName, prefix) {
@@ -139,7 +142,7 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 		if err == nil && resp.StatusCode == 200 {
 			if m := wpFeedVersionRe.FindSubmatch(resp.Body); m != nil {
 				version = string(m[1])
-				proof.Probe = append(proof.Probe, "feed=atom")
+				proof.Probe = append(proof.Probe, "/?feed=atom")
 			}
 		}
 

@@ -145,9 +145,12 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 		}
 	}
 
-	// Cookie checks — run against all responses
+	// Cookie checks — use pre-merged cookies (browser jar + Set-Cookie headers)
 	if len(d.def.Checks.Cookies) > 0 {
-		cookies := chain.ExtractCookies(allResponses)
+		cookies := ctx.Cookies
+		if cookies == nil {
+			cookies = chain.ExtractCookies(allResponses)
+		}
 		for cookieName, check := range d.def.Checks.Cookies {
 			total++
 			if matchCookie(cookies, cookieName, check) {
