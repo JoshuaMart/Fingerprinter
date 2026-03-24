@@ -128,16 +128,22 @@ func (w *Worker) processMessage(ctx context.Context, msg redis.XMessage) {
 
 func (w *Worker) emitEvents(ctx context.Context, scanID, target string, result *models.ScanResult) {
 	for _, tech := range result.Technologies {
+		values := map[string]interface{}{
+			"type":     "technology:detected",
+			"scan_id":  scanID,
+			"target":   target,
+			"name":     tech.Name,
+			"version":  tech.Version,
+			"category": tech.Category,
+		}
+
+		if proofJSON, err := json.Marshal(tech.Proof); err == nil {
+			values["proof"] = string(proofJSON)
+		}
+
 		err := w.client.XAdd(ctx, &redis.XAddArgs{
 			Stream: w.cfg.Stream,
-			Values: map[string]interface{}{
-				"type":     "technology:detected",
-				"scan_id":  scanID,
-				"target":   target,
-				"name":     tech.Name,
-				"version":  tech.Version,
-				"category": tech.Category,
-			},
+			Values: values,
 		}).Err()
 		if err != nil {
 			slog.Error("failed to emit technology:detected", "scan_id", scanID, "name", tech.Name, "error", err)
