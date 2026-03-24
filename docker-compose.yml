@@ -4,6 +4,7 @@ services:
     command:
       - --ignore-certificate-errors
       - --remote-allow-origins=*
+    restart: always
     healthcheck:
       test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9222' 2>/dev/null"]
       interval: 5s
