@@ -64,7 +64,7 @@ func New(cfg *config.Config) (*Scanner, error) {
 	}
 
 	// Start browser pool (mandatory)
-	pool, err := browser.NewPool(cfg.Browser.PoolSize, cfg.Browser.PageTimeout, cfg.Browser.ControlURL, cfg.Scanner.Proxy, cfg.Scanner.UserHeaders)
+	pool, err := browser.NewPool(cfg.Browser.MaxPages, cfg.Browser.PageTimeout, cfg.Browser.ControlURLs, cfg.Scanner.Proxy, cfg.Scanner.UserHeaders)
 	if err != nil {
 		return nil, fmt.Errorf("starting browser pool: %w", err)
 	}
@@ -176,6 +176,7 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 
 		// Detections (parallel, handled by engine)
 		detCtx := &models.DetectionContext{
+			Ctx:            ctx,
 			Responses:      detResponses,
 			Document:       doc,
 			HTTPClient:     s.httpClient,

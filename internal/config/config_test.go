@@ -28,8 +28,8 @@ func TestDefaults(t *testing.T) {
 	if cfg.Scanner.ConcurrentScans != 50 {
 		t.Errorf("expected default concurrent_scans 50, got %d", cfg.Scanner.ConcurrentScans)
 	}
-	if cfg.Browser.ControlURL != "http://localhost:9222" {
-		t.Errorf("expected default control_url 'http://localhost:9222', got %q", cfg.Browser.ControlURL)
+	if len(cfg.Browser.ControlURLs) != 1 || cfg.Browser.ControlURLs[0] != "http://localhost:9222" {
+		t.Errorf("expected default control_urls ['http://localhost:9222'], got %v", cfg.Browser.ControlURLs)
 	}
 }
 
@@ -46,8 +46,9 @@ scanner:
     X-Custom: "test"
   concurrent_scans: 100
 browser:
-  control_url: "ws://remote:9222"
-  pool_size: 10
+  control_urls:
+    - "ws://remote:9222"
+  max_pages: 10
   page_timeout: 30s
 `)
 	dir := t.TempDir()
@@ -73,15 +74,14 @@ browser:
 	if cfg.Scanner.Headers["X-Custom"] != "test" {
 		t.Errorf("expected X-Custom header, got %s", cfg.Scanner.Headers["X-Custom"])
 	}
-	if cfg.Browser.ControlURL != "ws://remote:9222" {
-		t.Errorf("expected control_url 'ws://remote:9222', got %q", cfg.Browser.ControlURL)
+	if len(cfg.Browser.ControlURLs) != 1 || cfg.Browser.ControlURLs[0] != "ws://remote:9222" {
+		t.Errorf("expected control_urls ['ws://remote:9222'], got %v", cfg.Browser.ControlURLs)
 	}
 }
 
 func TestEnvOverrides(t *testing.T) {
 	t.Setenv("FINGERPRINTER_SERVER_PORT", "4000")
 	t.Setenv("FINGERPRINTER_SCANNER_USER_AGENT", "EnvAgent/1.0")
-	t.Setenv("FINGERPRINTER_BROWSER_CONTROL_URL", "ws://custom:9222")
 
 	cfg, err := Load("")
 	if err != nil {
@@ -93,9 +93,6 @@ func TestEnvOverrides(t *testing.T) {
 	}
 	if cfg.Scanner.Headers["User-Agent"] != "EnvAgent/1.0" {
 		t.Errorf("expected User-Agent from env, got %s", cfg.Scanner.Headers["User-Agent"])
-	}
-	if cfg.Browser.ControlURL != "ws://custom:9222" {
-		t.Errorf("expected control_url from env, got %q", cfg.Browser.ControlURL)
 	}
 }
 
