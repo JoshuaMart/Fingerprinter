@@ -218,14 +218,11 @@ func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *N
 		return fmt.Errorf("navigating to %s: %w", targetURL, err)
 	}
 
-	// Wait for page to be ready
-	if err := navPage.WaitLoad(); err != nil {
-		slog.Warn("page WaitLoad failed, continuing", "url", targetURL, "error", err)
+	// Wait for page to be fully ready: load event + network idle + DOM stable.
+	// WaitStable runs all three checks in parallel and returns when all agree.
+	if err := navPage.WaitStable(500 * time.Millisecond); err != nil {
+		slog.Warn("page WaitStable failed, continuing", "url", targetURL, "error", err)
 	}
-
-	// Wait for network to settle (scripts, XHR, etc.)
-	wait := navPage.WaitRequestIdle(time.Second, nil, nil, nil)
-	wait()
 
 	// Post-navigation operations use the parent context (not the page timeout)
 	// so they don't fail if navigation consumed the entire page_timeout budget.
@@ -405,8 +402,8 @@ func (p *Pool) NavigateCaptureAndEval(ctx context.Context, targetURL string, jsE
 		slog.Warn("page WaitLoad failed", "url", targetURL, "error", err)
 	}
 
-	// Wait for network to settle (scripts, XHR, etc.) before evaluating JS
-	wait := navPage.WaitRequestIdle(time.Second, nil, nil, nil)
+	// Short network idle wait — we only need the response, not full DOM stability
+	wait := navPage.WaitRequestIdle(300*time.Millisecond, nil, nil, nil)
 	wait()
 
 	chain := capture.Chain()
