@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,62 +24,27 @@ import (
 	"golang.org/x/net/html"
 )
 
-// browserBackend represents a single remote Chrome instance.
-type browserBackend struct {
-	browser    *rod.Browser
-	controlURL string
+// backendConfig holds connection info for a Chrome instance.
+type backendConfig struct {
+	controlURL string // original URL (http:// needs resolution, ws:// used as-is)
 	proxyURL   string
-	mu         sync.Mutex
 }
 
-// reconnect drops the existing connection and creates a new one.
-func (be *browserBackend) reconnect() error {
-	be.mu.Lock()
-	defer be.mu.Unlock()
-
-	if be.browser != nil {
-		_ = be.browser.Close()
-	}
-
-	wsURL, err := resolveWSURL(be.controlURL)
-	if err != nil {
-		return fmt.Errorf("resolving browser WebSocket URL from %s: %w", be.controlURL, err)
-	}
-
-	b, err := connectBrowser(wsURL)
-	if err != nil {
-		return fmt.Errorf("reconnecting to browser at %s: %w", wsURL, err)
-	}
-
-	if be.proxyURL != "" {
-		res, err := proto.TargetCreateBrowserContext{
-			ProxyServer:     be.proxyURL,
-			DisposeOnDetach: true,
-		}.Call(b)
-		if err != nil {
-			return fmt.Errorf("recreating browser context with proxy: %w", err)
-		}
-		ctx := *b
-		ctx.BrowserContextID = res.BrowserContextID
-		b = &ctx
-	}
-
-	be.browser = b
-	return nil
-}
-
-// Pool manages browser pages distributed across one or more remote Chrome instances.
+// Pool manages ephemeral browser connections distributed across one or more
+// remote Chrome instances. Each operation creates a fresh connection, performs
+// work, and disconnects. This avoids stale connection issues with cloud
+// providers and keeps behavior uniform for local and remote backends.
 type Pool struct {
-	backends      []*browserBackend
+	backends      []backendConfig
 	headers       map[string]string
 	pageTimeout   time.Duration
-	pageSemaphore chan struct{} // limits concurrent open pages
+	pageSemaphore chan struct{} // limits concurrent browser connections
 	robin         atomic.Uint64
 	closed        bool
 }
 
-// NewPool connects to one or more remote browsers via CDP.
-// Pages are distributed across backends via round-robin.
+// NewPool resolves WebSocket URLs for all backends and validates connectivity.
+// No persistent connections are kept — each operation connects ephemerally.
 func NewPool(maxPages int, pageTimeout time.Duration, controlURLs []string, proxyURL string, headers map[string]string) (*Pool, error) {
 	if maxPages < 1 {
 		maxPages = 10
@@ -89,8 +53,9 @@ func NewPool(maxPages int, pageTimeout time.Duration, controlURLs []string, prox
 		return nil, fmt.Errorf("at least one browser control URL is required")
 	}
 
-	backends := make([]*browserBackend, 0, len(controlURLs))
+	backends := make([]backendConfig, 0, len(controlURLs))
 	for _, controlURL := range controlURLs {
+		// Health check: resolve, connect, create a page, disconnect
 		wsURL, err := resolveWSURL(controlURL)
 		if err != nil {
 			return nil, fmt.Errorf("resolving browser WebSocket URL from %s: %w", controlURL, err)
@@ -101,31 +66,15 @@ func NewPool(maxPages int, pageTimeout time.Duration, controlURLs []string, prox
 		if err != nil {
 			return nil, fmt.Errorf("connecting to browser at %s: %w", wsURL, err)
 		}
-
-		// When a proxy is configured, create a dedicated browser context with the proxy.
-		if proxyURL != "" {
-			res, err := proto.TargetCreateBrowserContext{
-				ProxyServer:     proxyURL,
-				DisposeOnDetach: true,
-			}.Call(b)
-			if err != nil {
-				return nil, fmt.Errorf("creating browser context with proxy on %s: %w", controlURL, err)
-			}
-			ctx := *b
-			ctx.BrowserContextID = res.BrowserContextID
-			b = &ctx
-			slog.Info("browser proxy configured", "proxy", proxyURL, "backend", controlURL)
-		}
-
-		// Health check
 		page, err := b.Page(proto.TargetCreateTarget{URL: "about:blank"})
 		if err != nil {
+			_ = b.Close()
 			return nil, fmt.Errorf("browser health check failed for %s: %w", controlURL, err)
 		}
 		_ = page.Close()
+		_ = b.Close()
 
-		backends = append(backends, &browserBackend{
-			browser:    b,
+		backends = append(backends, backendConfig{
 			controlURL: controlURL,
 			proxyURL:   proxyURL,
 		})
@@ -141,84 +90,57 @@ func NewPool(maxPages int, pageTimeout time.Duration, controlURLs []string, prox
 	}, nil
 }
 
-// nextBackend returns the next backend via round-robin.
-func (p *Pool) nextBackend() *browserBackend {
+// nextBackend returns the next backend config via round-robin.
+func (p *Pool) nextBackend() backendConfig {
 	idx := p.robin.Add(1) - 1
 	return p.backends[idx%uint64(len(p.backends))]
 }
 
-// createPage creates a new blank page on a round-robin backend, reconnecting if necessary.
-// It acquires the page semaphore first to limit concurrent pages.
-// Callers MUST call releasePage() when done (typically via defer).
-func (p *Pool) createPage(ctx context.Context) (*rod.Page, error) {
+// withBrowser creates an ephemeral browser connection, calls fn, then disconnects.
+// It acquires the semaphore to limit concurrent connections.
+func (p *Pool) withBrowser(ctx context.Context, fn func(b *rod.Browser) error) error {
+	// Acquire connection slot
 	select {
 	case p.pageSemaphore <- struct{}{}:
+		defer func() { <-p.pageSemaphore }()
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return ctx.Err()
 	}
 
-	be := p.nextBackend()
-	page, err := be.browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
+	cfg := p.nextBackend()
+
+	wsURL, err := resolveWSURL(cfg.controlURL)
 	if err != nil {
-		slog.Warn("page creation failed, attempting reconnect", "error", err, "backend", be.controlURL)
-		if reconnErr := be.reconnect(); reconnErr != nil {
-			p.releasePage()
-			return nil, fmt.Errorf("reconnect failed: %w (original: %w)", reconnErr, err)
-		}
-		page, err = be.browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
+		return fmt.Errorf("resolving browser WebSocket URL from %s: %w", cfg.controlURL, err)
+	}
+
+	b, err := connectBrowser(wsURL)
+	if err != nil {
+		return fmt.Errorf("connecting to browser at %s: %w", wsURL, err)
+	}
+	defer func() { _ = b.Close() }()
+
+	// If proxy is configured, create a dedicated browser context
+	if cfg.proxyURL != "" {
+		res, err := proto.TargetCreateBrowserContext{
+			ProxyServer:     cfg.proxyURL,
+			DisposeOnDetach: true,
+		}.Call(b)
 		if err != nil {
-			p.releasePage()
-			return nil, fmt.Errorf("creating page after reconnect: %w", err)
+			return fmt.Errorf("creating browser context with proxy: %w", err)
 		}
+		proxied := *b
+		proxied.BrowserContextID = res.BrowserContextID
+		b = &proxied
 	}
 
-	if err := p.setExtraHeaders(page); err != nil {
-		slog.Warn("failed to set extra headers on page", "error", err)
-	}
-
-	return page, nil
+	return fn(b)
 }
 
-// releasePage releases a page slot back to the semaphore.
-func (p *Pool) releasePage() {
-	<-p.pageSemaphore
-}
-
-// createIncognitoContext creates a fresh BrowserContext on a round-robin backend
-// for scan isolation. The returned cleanup function disposes the context.
-func (p *Pool) createIncognitoContext() (*rod.Browser, func(), error) {
-	be := p.nextBackend()
-	create := proto.TargetCreateBrowserContext{DisposeOnDetach: true}
-	if be.proxyURL != "" {
-		create.ProxyServer = be.proxyURL
-	}
-
-	res, err := create.Call(be.browser)
-	if err != nil {
-		return nil, nil, fmt.Errorf("creating browser context: %w", err)
-	}
-
-	incognito := *be.browser
-	incognito.BrowserContextID = res.BrowserContextID
-
-	cleanup := func() {
-		_ = proto.TargetDisposeBrowserContext{BrowserContextID: res.BrowserContextID}.Call(be.browser)
-	}
-	return &incognito, cleanup, nil
-}
-
-// createPageOn creates a new blank page on the given browser (or context),
-// acquiring the page semaphore first.
-func (p *Pool) createPageOn(ctx context.Context, b *rod.Browser) (*rod.Page, error) {
-	select {
-	case p.pageSemaphore <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-
+// createPage creates a new blank page on the given browser and applies headers.
+func (p *Pool) createPage(b *rod.Browser) (*rod.Page, error) {
 	page, err := b.Page(proto.TargetCreateTarget{URL: "about:blank"})
 	if err != nil {
-		p.releasePage()
 		return nil, fmt.Errorf("creating page: %w", err)
 	}
 
@@ -263,9 +185,9 @@ type NavigateResult struct {
 	BrowserCookies   map[string]string // Cookies from browser cookie jar (name → value)
 }
 
-// Navigate opens a URL in a fresh page, captures the redirect chain via CDP Network
-// events, waits for load, and calls fn with the result. The page is closed after fn returns.
-// Each call gets its own incognito BrowserContext for cookie/storage isolation.
+// Navigate opens a URL in a fresh ephemeral browser, captures the redirect chain
+// via CDP Network events, waits for load, and calls fn with the result.
+// The browser connection is closed after fn returns.
 func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *NavigateResult) error) error {
 	parsedURL, err := url.Parse(targetURL)
 	if err != nil {
@@ -273,117 +195,106 @@ func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *N
 	}
 	targetHost := parsedURL.Hostname()
 
-	// Create an isolated incognito context for this scan (clean cookies/storage).
-	// If a proxy is configured, apply it to the context as well.
-	incognito, cleanup, err := p.createIncognitoContext()
-	if err != nil {
-		return fmt.Errorf("creating incognito context: %w", err)
-	}
-	defer cleanup()
+	return p.withBrowser(ctx, func(b *rod.Browser) error {
+		page, err := p.createPage(b)
+		if err != nil {
+			return fmt.Errorf("getting page: %w", err)
+		}
+		defer func() { _ = page.Close() }()
 
-	page, err := p.createPageOn(ctx, incognito)
-	if err != nil {
-		return fmt.Errorf("getting page: %w", err)
-	}
-	defer func() { _ = page.Close(); p.releasePage() }()
+		page = page.Context(ctx)
 
-	page = page.Context(ctx)
+		// Enable Network domain for CDP event capture
+		if err := (proto.NetworkEnable{}).Call(page); err != nil {
+			return fmt.Errorf("enabling network domain: %w", err)
+		}
 
-	// Enable Network domain for CDP event capture
-	if err := (proto.NetworkEnable{}).Call(page); err != nil {
-		return fmt.Errorf("enabling network domain: %w", err)
-	}
+		// Set up network capture
+		capture := NewNetworkCapture(targetHost, targetURL, page.FrameID)
 
-	// Set up network capture
-	capture := NewNetworkCapture(targetHost, targetURL, page.FrameID)
+		// Listen for network events
+		go page.EachEvent(
+			func(e *proto.NetworkRequestWillBeSent) {
+				capture.HandleRequestWillBeSent(e)
+			},
+			func(e *proto.NetworkResponseReceived) {
+				capture.HandleResponseReceived(e)
+			},
+			func(e *proto.NetworkWebSocketCreated) {
+				capture.HandleWebSocketCreated(e)
+			},
+		)()
 
-	// Listen for network events
-	go page.EachEvent(
-		func(e *proto.NetworkRequestWillBeSent) {
-			capture.HandleRequestWillBeSent(e)
-		},
-		func(e *proto.NetworkResponseReceived) {
-			capture.HandleResponseReceived(e)
-		},
-		func(e *proto.NetworkWebSocketCreated) {
-			capture.HandleWebSocketCreated(e)
-		},
-	)()
+		// Use page timeout only for navigation + wait phases
+		navPage := page.Timeout(p.pageTimeout)
 
-	// Use page timeout only for navigation + wait phases
-	navPage := page.Timeout(p.pageTimeout)
+		if err := navPage.Navigate(targetURL); err != nil {
+			return fmt.Errorf("navigating to %s: %w", targetURL, err)
+		}
 
-	if err := navPage.Navigate(targetURL); err != nil {
-		return fmt.Errorf("navigating to %s: %w", targetURL, err)
-	}
+		// Wait for page to be ready using adaptive strategy:
+		// WaitLoad (baseline) + network idle (200ms) + DOM stability (150ms MutationObserver)
+		if err := navPage.WaitLoad(); err != nil {
+			slog.Warn("page WaitLoad failed, continuing", "url", targetURL, "error", err)
+		}
+		waitPageReady(navPage)
 
-	// Wait for page to be ready using a two-phase adaptive strategy:
-	// 1. WaitLoad ensures scripts/subresources are loaded (baseline)
-	// 2. In parallel: short network idle (200ms grace) + MutationObserver-based
-	//    DOM stability (150ms of no mutations). Both must be satisfied.
-	// This is faster than fixed-duration waits on static sites while still
-	// catching SPA hydration and async data fetching.
-	if err := navPage.WaitLoad(); err != nil {
-		slog.Warn("page WaitLoad failed, continuing", "url", targetURL, "error", err)
-	}
-	waitPageReady(navPage)
+		// Post-navigation operations use the parent context (not the page timeout)
 
-	// Post-navigation operations use the parent context (not the page timeout)
-	// so they don't fail if navigation consumed the entire page_timeout budget.
-
-	// Check for client-side redirect to a different host
-	externalRedirect := false
-	info, err := page.Info()
-	if err == nil {
-		if parsed, parseErr := url.Parse(info.URL); parseErr == nil {
-			if parsed.Hostname() != targetHost {
-				slog.Warn("browser redirected to external host",
-					"from", targetHost, "to", parsed.Hostname())
-				externalRedirect = true
+		// Check for client-side redirect to a different host
+		externalRedirect := false
+		info, err := page.Info()
+		if err == nil {
+			if parsed, parseErr := url.Parse(info.URL); parseErr == nil {
+				if parsed.Hostname() != targetHost {
+					slog.Warn("browser redirected to external host",
+						"from", targetHost, "to", parsed.Hostname())
+					externalRedirect = true
+				}
 			}
 		}
-	}
 
-	// Build the chain from captured network events
-	chainResponses, err := p.buildChain(page, capture)
-	if err != nil {
-		slog.Warn("failed to build full chain, using partial", "error", err)
-	}
-
-	// Truncate trailing out-of-scope responses
-	if externalRedirect {
-		chainResponses = truncateOutOfScope(chainResponses, targetHost)
-		if len(chainResponses) == 0 {
-			return fmt.Errorf("redirected to external host with no in-scope responses")
+		// Build the chain from captured network events
+		chainResponses, err := p.buildChain(page, capture)
+		if err != nil {
+			slog.Warn("failed to build full chain, using partial", "error", err)
 		}
-	}
 
-	// Extract cookies from browser cookie jar (CDP doesn't expose Set-Cookie headers)
-	browserCookies := make(map[string]string)
-	cookies, err := page.Cookies(nil)
-	if err != nil {
-		slog.Warn("failed to extract browser cookies", "error", err)
-	} else {
-		slog.Debug("browser cookies extracted", "count", len(cookies))
-		for _, c := range cookies {
-			browserCookies[c.Name] = c.Value
+		// Truncate trailing out-of-scope responses
+		if externalRedirect {
+			chainResponses = truncateOutOfScope(chainResponses, targetHost)
+			if len(chainResponses) == 0 {
+				return fmt.Errorf("redirected to external host with no in-scope responses")
+			}
 		}
-	}
 
-	result := &NavigateResult{
-		Page:             page,
-		ExternalHosts:    capture.ExternalHosts(),
-		WebSockets:       capture.WebSockets(),
-		Chain:            chainResponses,
-		ExternalRedirect: externalRedirect,
-		BrowserCookies:   browserCookies,
-	}
+		// Extract cookies from browser cookie jar
+		browserCookies := make(map[string]string)
+		cookies, err := page.Cookies(nil)
+		if err != nil {
+			slog.Warn("failed to extract browser cookies", "error", err)
+		} else {
+			slog.Debug("browser cookies extracted", "count", len(cookies))
+			for _, c := range cookies {
+				browserCookies[c.Name] = c.Value
+			}
+		}
 
-	return fn(result)
+		result := &NavigateResult{
+			Page:             page,
+			ExternalHosts:    capture.ExternalHosts(),
+			WebSockets:       capture.WebSockets(),
+			Chain:            chainResponses,
+			ExternalRedirect: externalRedirect,
+			BrowserCookies:   browserCookies,
+		}
+
+		return fn(result)
+	})
 }
 
-// NavigateAndCapture navigates to a URL in a new tab and returns the final response.
-// Used by detectors for path checks and probe404.
+// NavigateAndCapture navigates to a URL in a fresh ephemeral browser and returns
+// the final response. Used by detectors for path checks.
 func (p *Pool) NavigateAndCapture(ctx context.Context, targetURL string) (*models.ChainedResponse, error) {
 	parsedURL, err := url.Parse(targetURL)
 	if err != nil {
@@ -391,78 +302,81 @@ func (p *Pool) NavigateAndCapture(ctx context.Context, targetURL string) (*model
 	}
 	targetHost := parsedURL.Hostname()
 
-	page, err := p.createPage(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting page: %w", err)
-	}
-	defer func() { _ = page.Close(); p.releasePage() }()
-
-	page = page.Context(ctx)
-
-	// Enable Network domain
-	if err := (proto.NetworkEnable{}).Call(page); err != nil {
-		return nil, fmt.Errorf("enabling network domain: %w", err)
-	}
-
-	capture := NewNetworkCapture(targetHost, targetURL, page.FrameID)
-
-	go page.EachEvent(
-		func(e *proto.NetworkRequestWillBeSent) {
-			capture.HandleRequestWillBeSent(e)
-		},
-		func(e *proto.NetworkResponseReceived) {
-			capture.HandleResponseReceived(e)
-		},
-		func(e *proto.NetworkWebSocketCreated) {
-			capture.HandleWebSocketCreated(e)
-		},
-	)()
-
-	navPage := page.Timeout(p.pageTimeout)
-
-	if err := navPage.Navigate(targetURL); err != nil {
-		return nil, fmt.Errorf("navigating to %s: %w", targetURL, err)
-	}
-
-	if err := navPage.WaitLoad(); err != nil {
-		slog.Warn("page WaitLoad failed", "url", targetURL, "error", err)
-	}
-
-	chain := capture.Chain()
-	if len(chain) == 0 {
-		return nil, fmt.Errorf("no network response captured for %s", targetURL)
-	}
-
-	last := chain[len(chain)-1]
-	flat := flattenHeaders(last.headers)
-
-	// Try to get the response body
-	var body []byte
-	if last.requestID != "" {
-		bodyResult, err := proto.NetworkGetResponseBody{RequestID: last.requestID}.Call(page)
-		if err == nil {
-			body = []byte(bodyResult.Body)
+	var resp *models.ChainedResponse
+	err = p.withBrowser(ctx, func(b *rod.Browser) error {
+		page, err := p.createPage(b)
+		if err != nil {
+			return fmt.Errorf("getting page: %w", err)
 		}
-	}
+		defer func() { _ = page.Close() }()
 
-	resp := &models.ChainedResponse{
-		URL:          last.url,
-		StatusCode:   last.statusCode,
-		Headers:      flat,
-		RawHeaders:   last.headers,
-		Body:         body,
-		ResponseSize: len(body),
-	}
+		page = page.Context(ctx)
 
-	if isHTMLContentType(flat["Content-Type"]) {
-		resp.Title = parseTitle(body)
-	}
+		if err := (proto.NetworkEnable{}).Call(page); err != nil {
+			return fmt.Errorf("enabling network domain: %w", err)
+		}
 
-	return resp, nil
+		capture := NewNetworkCapture(targetHost, targetURL, page.FrameID)
+
+		go page.EachEvent(
+			func(e *proto.NetworkRequestWillBeSent) {
+				capture.HandleRequestWillBeSent(e)
+			},
+			func(e *proto.NetworkResponseReceived) {
+				capture.HandleResponseReceived(e)
+			},
+			func(e *proto.NetworkWebSocketCreated) {
+				capture.HandleWebSocketCreated(e)
+			},
+		)()
+
+		navPage := page.Timeout(p.pageTimeout)
+
+		if err := navPage.Navigate(targetURL); err != nil {
+			return fmt.Errorf("navigating to %s: %w", targetURL, err)
+		}
+
+		if err := navPage.WaitLoad(); err != nil {
+			slog.Warn("page WaitLoad failed", "url", targetURL, "error", err)
+		}
+
+		chain := capture.Chain()
+		if len(chain) == 0 {
+			return fmt.Errorf("no network response captured for %s", targetURL)
+		}
+
+		last := chain[len(chain)-1]
+		flat := flattenHeaders(last.headers)
+
+		var body []byte
+		if last.requestID != "" {
+			bodyResult, err := proto.NetworkGetResponseBody{RequestID: last.requestID}.Call(page)
+			if err == nil {
+				body = []byte(bodyResult.Body)
+			}
+		}
+
+		resp = &models.ChainedResponse{
+			URL:          last.url,
+			StatusCode:   last.statusCode,
+			Headers:      flat,
+			RawHeaders:   last.headers,
+			Body:         body,
+			ResponseSize: len(body),
+		}
+
+		if isHTMLContentType(flat["Content-Type"]) {
+			resp.Title = parseTitle(body)
+		}
+
+		return nil
+	})
+
+	return resp, err
 }
 
-// NavigateCaptureAndEval navigates to a URL, captures the response, waits for
-// network idle, and evaluates JS expressions on the page.
+// NavigateCaptureAndEval navigates to a URL in a fresh ephemeral browser,
+// captures the response, and evaluates JS expressions on the page.
 func (p *Pool) NavigateCaptureAndEval(ctx context.Context, targetURL string, jsExprs []string) (*models.ChainedResponse, map[string]string, error) {
 	parsedURL, err := url.Parse(targetURL)
 	if err != nil {
@@ -470,90 +384,97 @@ func (p *Pool) NavigateCaptureAndEval(ctx context.Context, targetURL string, jsE
 	}
 	targetHost := parsedURL.Hostname()
 
-	page, err := p.createPage(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("getting page: %w", err)
-	}
-	defer func() { _ = page.Close(); p.releasePage() }()
+	var resp *models.ChainedResponse
+	var jsResults map[string]string
 
-	page = page.Context(ctx)
-
-	if err := (proto.NetworkEnable{}).Call(page); err != nil {
-		return nil, nil, fmt.Errorf("enabling network domain: %w", err)
-	}
-
-	capture := NewNetworkCapture(targetHost, targetURL, page.FrameID)
-
-	go page.EachEvent(
-		func(e *proto.NetworkRequestWillBeSent) {
-			capture.HandleRequestWillBeSent(e)
-		},
-		func(e *proto.NetworkResponseReceived) {
-			capture.HandleResponseReceived(e)
-		},
-		func(e *proto.NetworkWebSocketCreated) {
-			capture.HandleWebSocketCreated(e)
-		},
-	)()
-
-	navPage := page.Timeout(p.pageTimeout)
-
-	if err := navPage.Navigate(targetURL); err != nil {
-		return nil, nil, fmt.Errorf("navigating to %s: %w", targetURL, err)
-	}
-
-	if err := navPage.WaitLoad(); err != nil {
-		slog.Warn("page WaitLoad failed", "url", targetURL, "error", err)
-	}
-	waitPageReady(navPage)
-
-	chain := capture.Chain()
-	if len(chain) == 0 {
-		return nil, nil, fmt.Errorf("no network response captured for %s", targetURL)
-	}
-
-	last := chain[len(chain)-1]
-	flat := flattenHeaders(last.headers)
-
-	var body []byte
-	if last.requestID != "" {
-		bodyResult, err := proto.NetworkGetResponseBody{RequestID: last.requestID}.Call(page)
-		if err == nil {
-			body = []byte(bodyResult.Body)
-		}
-	}
-
-	resp := &models.ChainedResponse{
-		URL:          last.url,
-		StatusCode:   last.statusCode,
-		Headers:      flat,
-		RawHeaders:   last.headers,
-		Body:         body,
-		ResponseSize: len(body),
-	}
-
-	if isHTMLContentType(flat["Content-Type"]) {
-		resp.Title = parseTitle(body)
-	}
-
-	// Evaluate JS expressions on the navigated page
-	jsResults := make(map[string]string, len(jsExprs))
-	for _, expr := range jsExprs {
-		result, err := page.Eval("() => { try { return " + expr + " } catch(e) { return undefined } }")
+	err = p.withBrowser(ctx, func(b *rod.Browser) error {
+		page, err := p.createPage(b)
 		if err != nil {
-			continue
+			return fmt.Errorf("getting page: %w", err)
 		}
-		if result == nil || result.Value.Nil() {
-			continue
-		}
-		val := result.Value.String()
-		if val == "" || val == "false" {
-			continue
-		}
-		jsResults[expr] = val
-	}
+		defer func() { _ = page.Close() }()
 
-	return resp, jsResults, nil
+		page = page.Context(ctx)
+
+		if err := (proto.NetworkEnable{}).Call(page); err != nil {
+			return fmt.Errorf("enabling network domain: %w", err)
+		}
+
+		capture := NewNetworkCapture(targetHost, targetURL, page.FrameID)
+
+		go page.EachEvent(
+			func(e *proto.NetworkRequestWillBeSent) {
+				capture.HandleRequestWillBeSent(e)
+			},
+			func(e *proto.NetworkResponseReceived) {
+				capture.HandleResponseReceived(e)
+			},
+			func(e *proto.NetworkWebSocketCreated) {
+				capture.HandleWebSocketCreated(e)
+			},
+		)()
+
+		navPage := page.Timeout(p.pageTimeout)
+
+		if err := navPage.Navigate(targetURL); err != nil {
+			return fmt.Errorf("navigating to %s: %w", targetURL, err)
+		}
+
+		if err := navPage.WaitLoad(); err != nil {
+			slog.Warn("page WaitLoad failed", "url", targetURL, "error", err)
+		}
+		waitPageReady(navPage)
+
+		chain := capture.Chain()
+		if len(chain) == 0 {
+			return fmt.Errorf("no network response captured for %s", targetURL)
+		}
+
+		last := chain[len(chain)-1]
+		flat := flattenHeaders(last.headers)
+
+		var body []byte
+		if last.requestID != "" {
+			bodyResult, err := proto.NetworkGetResponseBody{RequestID: last.requestID}.Call(page)
+			if err == nil {
+				body = []byte(bodyResult.Body)
+			}
+		}
+
+		resp = &models.ChainedResponse{
+			URL:          last.url,
+			StatusCode:   last.statusCode,
+			Headers:      flat,
+			RawHeaders:   last.headers,
+			Body:         body,
+			ResponseSize: len(body),
+		}
+
+		if isHTMLContentType(flat["Content-Type"]) {
+			resp.Title = parseTitle(body)
+		}
+
+		// Evaluate JS expressions on the navigated page
+		jsResults = make(map[string]string, len(jsExprs))
+		for _, expr := range jsExprs {
+			result, err := page.Eval("() => { try { return " + expr + " } catch(e) { return undefined } }")
+			if err != nil {
+				continue
+			}
+			if result == nil || result.Value.Nil() {
+				continue
+			}
+			val := result.Value.String()
+			if val == "" || val == "false" {
+				continue
+			}
+			jsResults[expr] = val
+		}
+
+		return nil
+	})
+
+	return resp, jsResults, err
 }
 
 // truncateOutOfScope removes trailing responses whose hostname differs from targetHost.

@@ -12,8 +12,10 @@ scanner:
   # proxy: "http://127.0.0.1:8080"
 
 browser:
-  control_urls:                         # Chrome instances (round-robin)
-    - "http://localhost:9222"
+  control_urls:
+    - "http://chrome-1:9222"
+    - "http://chrome-2:9222"
+    - "http://chrome-3:9222"
   max_pages: 50       # max concurrent browser tabs across all instances
   page_timeout: 15s
 
