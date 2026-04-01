@@ -39,9 +39,9 @@ Scan a URL using a headless browser, capture the full redirect chain via CDP net
 docker compose up -d
 ```
 
-This starts two containers:
-- **chrome** — headless Chromium exposing CDP on port 9222
-- **core** — Fingerprinter API on port 3001, connected to Chrome
+This starts four containers:
+- **chrome-1, chrome-2, chrome-3** — headless Chromium instances exposing CDP on port 9222
+- **core** — Fingerprinter API on port 3001, distributing work across Chrome instances via round-robin
 
 ### Binary
 
