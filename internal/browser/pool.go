@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"encoding/json"
@@ -24,76 +25,26 @@ import (
 	"golang.org/x/net/html"
 )
 
-// Pool manages browser pages connected to a remote browser (Chrome via CDP).
-type Pool struct {
-	browser     *rod.Browser
-	controlURL  string
-	proxyURL    string
-	headers     map[string]string
-	pageTimeout time.Duration
-	mu          sync.Mutex
-	closed      bool
+// browserBackend represents a single remote Chrome instance.
+type browserBackend struct {
+	browser    *rod.Browser
+	controlURL string
+	proxyURL   string
+	mu         sync.Mutex
 }
 
-// NewPool connects to a remote browser via CDP.
-// If proxyURL is non-empty, a dedicated browser context is created so that
-// all pages opened by the pool route traffic through the proxy.
-func NewPool(_ int, pageTimeout time.Duration, controlURL, proxyURL string, headers map[string]string) (*Pool, error) {
-	wsURL, err := resolveWSURL(controlURL)
+// reconnect drops the existing connection and creates a new one.
+func (be *browserBackend) reconnect() error {
+	be.mu.Lock()
+	defer be.mu.Unlock()
+
+	if be.browser != nil {
+		_ = be.browser.Close()
+	}
+
+	wsURL, err := resolveWSURL(be.controlURL)
 	if err != nil {
-		return nil, fmt.Errorf("resolving browser WebSocket URL from %s: %w", controlURL, err)
-	}
-	slog.Info("resolved browser WebSocket URL", "control", controlURL, "ws", wsURL)
-
-	b, err := connectBrowser(wsURL)
-	if err != nil {
-		return nil, fmt.Errorf("connecting to browser at %s: %w", wsURL, err)
-	}
-
-	// When a proxy is configured, create a dedicated browser context with the proxy.
-	if proxyURL != "" {
-		res, err := proto.TargetCreateBrowserContext{
-			ProxyServer:     proxyURL,
-			DisposeOnDetach: true,
-		}.Call(b)
-		if err != nil {
-			return nil, fmt.Errorf("creating browser context with proxy: %w", err)
-		}
-		ctx := *b
-		ctx.BrowserContextID = res.BrowserContextID
-		b = &ctx
-		slog.Info("browser proxy configured", "proxy", proxyURL)
-	}
-
-	// Health check — open and close a blank page
-	page, err := b.Page(proto.TargetCreateTarget{URL: "about:blank"})
-	if err != nil {
-		return nil, fmt.Errorf("browser health check failed: %w", err)
-	}
-	_ = page.Close()
-
-	return &Pool{
-		browser:     b,
-		controlURL:  controlURL,
-		proxyURL:    proxyURL,
-		headers:     headers,
-		pageTimeout: pageTimeout,
-	}, nil
-}
-
-// reconnect drops the existing browser connection and creates a new one.
-func (p *Pool) reconnect() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// Close the old browser connection to stop its goroutines (consumeMessages, etc.)
-	if p.browser != nil {
-		_ = p.browser.Close()
-	}
-
-	wsURL, err := resolveWSURL(p.controlURL)
-	if err != nil {
-		return fmt.Errorf("resolving browser WebSocket URL from %s: %w", p.controlURL, err)
+		return fmt.Errorf("resolving browser WebSocket URL from %s: %w", be.controlURL, err)
 	}
 
 	b, err := connectBrowser(wsURL)
@@ -101,9 +52,9 @@ func (p *Pool) reconnect() error {
 		return fmt.Errorf("reconnecting to browser at %s: %w", wsURL, err)
 	}
 
-	if p.proxyURL != "" {
+	if be.proxyURL != "" {
 		res, err := proto.TargetCreateBrowserContext{
-			ProxyServer:     p.proxyURL,
+			ProxyServer:     be.proxyURL,
 			DisposeOnDetach: true,
 		}.Call(b)
 		if err != nil {
@@ -114,22 +65,161 @@ func (p *Pool) reconnect() error {
 		b = &ctx
 	}
 
-	p.browser = b
+	be.browser = b
 	return nil
 }
 
-// createPage creates a new blank page, reconnecting if necessary.
-func (p *Pool) createPage() (*rod.Page, error) {
-	page, err := p.browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
+// Pool manages browser pages distributed across one or more remote Chrome instances.
+type Pool struct {
+	backends      []*browserBackend
+	headers       map[string]string
+	pageTimeout   time.Duration
+	pageSemaphore chan struct{} // limits concurrent open pages
+	robin         atomic.Uint64
+	closed        bool
+}
+
+// NewPool connects to one or more remote browsers via CDP.
+// Pages are distributed across backends via round-robin.
+func NewPool(maxPages int, pageTimeout time.Duration, controlURLs []string, proxyURL string, headers map[string]string) (*Pool, error) {
+	if maxPages < 1 {
+		maxPages = 10
+	}
+	if len(controlURLs) == 0 {
+		return nil, fmt.Errorf("at least one browser control URL is required")
+	}
+
+	backends := make([]*browserBackend, 0, len(controlURLs))
+	for _, controlURL := range controlURLs {
+		wsURL, err := resolveWSURL(controlURL)
+		if err != nil {
+			return nil, fmt.Errorf("resolving browser WebSocket URL from %s: %w", controlURL, err)
+		}
+		slog.Info("resolved browser WebSocket URL", "control", controlURL, "ws", wsURL)
+
+		b, err := connectBrowser(wsURL)
+		if err != nil {
+			return nil, fmt.Errorf("connecting to browser at %s: %w", wsURL, err)
+		}
+
+		// When a proxy is configured, create a dedicated browser context with the proxy.
+		if proxyURL != "" {
+			res, err := proto.TargetCreateBrowserContext{
+				ProxyServer:     proxyURL,
+				DisposeOnDetach: true,
+			}.Call(b)
+			if err != nil {
+				return nil, fmt.Errorf("creating browser context with proxy on %s: %w", controlURL, err)
+			}
+			ctx := *b
+			ctx.BrowserContextID = res.BrowserContextID
+			b = &ctx
+			slog.Info("browser proxy configured", "proxy", proxyURL, "backend", controlURL)
+		}
+
+		// Health check
+		page, err := b.Page(proto.TargetCreateTarget{URL: "about:blank"})
+		if err != nil {
+			return nil, fmt.Errorf("browser health check failed for %s: %w", controlURL, err)
+		}
+		_ = page.Close()
+
+		backends = append(backends, &browserBackend{
+			browser:    b,
+			controlURL: controlURL,
+			proxyURL:   proxyURL,
+		})
+	}
+
+	slog.Info("browser pool initialized", "backends", len(backends), "max_pages", maxPages)
+
+	return &Pool{
+		backends:      backends,
+		headers:       headers,
+		pageTimeout:   pageTimeout,
+		pageSemaphore: make(chan struct{}, maxPages),
+	}, nil
+}
+
+// nextBackend returns the next backend via round-robin.
+func (p *Pool) nextBackend() *browserBackend {
+	idx := p.robin.Add(1) - 1
+	return p.backends[idx%uint64(len(p.backends))]
+}
+
+// createPage creates a new blank page on a round-robin backend, reconnecting if necessary.
+// It acquires the page semaphore first to limit concurrent pages.
+// Callers MUST call releasePage() when done (typically via defer).
+func (p *Pool) createPage(ctx context.Context) (*rod.Page, error) {
+	select {
+	case p.pageSemaphore <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	be := p.nextBackend()
+	page, err := be.browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
 	if err != nil {
-		slog.Warn("page creation failed, attempting reconnect", "error", err)
-		if reconnErr := p.reconnect(); reconnErr != nil {
+		slog.Warn("page creation failed, attempting reconnect", "error", err, "backend", be.controlURL)
+		if reconnErr := be.reconnect(); reconnErr != nil {
+			p.releasePage()
 			return nil, fmt.Errorf("reconnect failed: %w (original: %w)", reconnErr, err)
 		}
-		page, err = p.browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
+		page, err = be.browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
 		if err != nil {
+			p.releasePage()
 			return nil, fmt.Errorf("creating page after reconnect: %w", err)
 		}
+	}
+
+	if err := p.setExtraHeaders(page); err != nil {
+		slog.Warn("failed to set extra headers on page", "error", err)
+	}
+
+	return page, nil
+}
+
+// releasePage releases a page slot back to the semaphore.
+func (p *Pool) releasePage() {
+	<-p.pageSemaphore
+}
+
+// createIncognitoContext creates a fresh BrowserContext on a round-robin backend
+// for scan isolation. The returned cleanup function disposes the context.
+func (p *Pool) createIncognitoContext() (*rod.Browser, func(), error) {
+	be := p.nextBackend()
+	create := proto.TargetCreateBrowserContext{DisposeOnDetach: true}
+	if be.proxyURL != "" {
+		create.ProxyServer = be.proxyURL
+	}
+
+	res, err := create.Call(be.browser)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating browser context: %w", err)
+	}
+
+	incognito := *be.browser
+	incognito.BrowserContextID = res.BrowserContextID
+
+	cleanup := func() {
+		_ = proto.TargetDisposeBrowserContext{BrowserContextID: res.BrowserContextID}.Call(be.browser)
+	}
+	return &incognito, cleanup, nil
+}
+
+// createPageOn creates a new blank page on the given browser (or context),
+// acquiring the page semaphore first.
+func (p *Pool) createPageOn(ctx context.Context, b *rod.Browser) (*rod.Page, error) {
+	select {
+	case p.pageSemaphore <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	page, err := b.Page(proto.TargetCreateTarget{URL: "about:blank"})
+	if err != nil {
+		p.releasePage()
+		return nil, fmt.Errorf("creating page: %w", err)
 	}
 
 	if err := p.setExtraHeaders(page); err != nil {
@@ -175,6 +265,7 @@ type NavigateResult struct {
 
 // Navigate opens a URL in a fresh page, captures the redirect chain via CDP Network
 // events, waits for load, and calls fn with the result. The page is closed after fn returns.
+// Each call gets its own incognito BrowserContext for cookie/storage isolation.
 func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *NavigateResult) error) error {
 	parsedURL, err := url.Parse(targetURL)
 	if err != nil {
@@ -182,11 +273,19 @@ func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *N
 	}
 	targetHost := parsedURL.Hostname()
 
-	page, err := p.createPage()
+	// Create an isolated incognito context for this scan (clean cookies/storage).
+	// If a proxy is configured, apply it to the context as well.
+	incognito, cleanup, err := p.createIncognitoContext()
+	if err != nil {
+		return fmt.Errorf("creating incognito context: %w", err)
+	}
+	defer cleanup()
+
+	page, err := p.createPageOn(ctx, incognito)
 	if err != nil {
 		return fmt.Errorf("getting page: %w", err)
 	}
-	defer func() { _ = page.Close() }()
+	defer func() { _ = page.Close(); p.releasePage() }()
 
 	page = page.Context(ctx)
 
@@ -292,11 +391,11 @@ func (p *Pool) NavigateAndCapture(ctx context.Context, targetURL string) (*model
 	}
 	targetHost := parsedURL.Hostname()
 
-	page, err := p.createPage()
+	page, err := p.createPage(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting page: %w", err)
 	}
-	defer func() { _ = page.Close() }()
+	defer func() { _ = page.Close(); p.releasePage() }()
 
 	page = page.Context(ctx)
 
@@ -371,11 +470,11 @@ func (p *Pool) NavigateCaptureAndEval(ctx context.Context, targetURL string, jsE
 	}
 	targetHost := parsedURL.Hostname()
 
-	page, err := p.createPage()
+	page, err := p.createPage(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("getting page: %w", err)
 	}
-	defer func() { _ = page.Close() }()
+	defer func() { _ = page.Close(); p.releasePage() }()
 
 	page = page.Context(ctx)
 
@@ -676,10 +775,8 @@ func resolveWSURL(controlURL string) (string, error) {
 	return wsURL.String(), nil
 }
 
-// Close marks the pool as closed. Does not close the remote browser — its
-// lifecycle is managed by the Docker container.
+// Close marks the pool as closed. Does not close remote browsers — their
+// lifecycle is managed by the Docker containers.
 func (p *Pool) Close() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.closed = true
 }

@@ -54,7 +54,7 @@ func (d *Detector) Detect(ctx *models.DetectionContext) (*models.DetectionResult
 		for _, check := range d.def.Checks.Paths {
 			if check.Browser {
 				// Browser mode: navigate via browser, supports JS eval on path page
-				resp, jsResults, ok := matchPath(ctx.BrowserPool, ctx.BaseURL, check, jsExprs)
+				resp, jsResults, ok := matchPath(ctx.Ctx, ctx.BrowserPool, ctx.BaseURL, check, jsExprs)
 				if ok && resp != nil {
 					pathResponses = append(pathResponses, *resp)
 					for k, v := range jsResults {
@@ -281,14 +281,14 @@ func matchCookie(cookies map[string]string, cookieName string, check CookieCheck
 	return false
 }
 
-func matchPath(navigator models.BrowserNavigator, baseURL string, check PathCheck, jsExprs []string) (*models.ChainedResponse, map[string]string, bool) {
+func matchPath(ctx context.Context, navigator models.BrowserNavigator, baseURL string, check PathCheck, jsExprs []string) (*models.ChainedResponse, map[string]string, bool) {
 	if navigator == nil {
 		return nil, nil, false
 	}
 	u := strings.TrimRight(baseURL, "/") + check.Path
 
 	if len(jsExprs) > 0 {
-		resp, jsResults, err := navigator.NavigateCaptureAndEval(context.Background(), u, jsExprs)
+		resp, jsResults, err := navigator.NavigateCaptureAndEval(ctx, u, jsExprs)
 		if err != nil {
 			return nil, nil, false
 		}
@@ -298,7 +298,7 @@ func matchPath(navigator models.BrowserNavigator, baseURL string, check PathChec
 		return nil, nil, false
 	}
 
-	resp, err := navigator.NavigateAndCapture(context.Background(), u)
+	resp, err := navigator.NavigateAndCapture(ctx, u)
 	if err != nil {
 		return nil, nil, false
 	}

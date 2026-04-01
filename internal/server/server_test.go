@@ -50,9 +50,9 @@ checks:
 			ConcurrentScans: 5,
 		},
 		Browser: config.BrowserConfig{
-			PoolSize:    1,
+			MaxPages:    10,
 			PageTimeout: 10 * time.Second,
-			ControlURL:  browserControlURL(),
+			ControlURLs: []string{browserControlURL()},
 		},
 		Detections: config.DetectionsConfig{YAMLDir: dir},
 	}

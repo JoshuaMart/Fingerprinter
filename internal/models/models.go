@@ -85,6 +85,7 @@ type BrowserNavigator interface {
 
 // DetectionContext provides all data available to a detector.
 type DetectionContext struct {
+	Ctx            context.Context
 	Responses      []ChainedResponse
 	Document       *goquery.Document
 	HTTPClient     *http.Client

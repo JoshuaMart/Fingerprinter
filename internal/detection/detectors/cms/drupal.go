@@ -1,7 +1,6 @@
 package cms
 
 import (
-	"context"
 	"regexp"
 	"strings"
 
@@ -154,7 +153,7 @@ func (d *DrupalDetector) probeVersion(ctx *models.DetectionContext, proof *model
 	base := strings.TrimRight(ctx.BaseURL, "/")
 
 	// CHANGELOG.txt (Drupal 7 and older)
-	resp, err := ctx.BrowserPool.NavigateAndCapture(context.Background(), base+"/CHANGELOG.txt")
+	resp, err := ctx.BrowserPool.NavigateAndCapture(ctx.Ctx, base+"/CHANGELOG.txt")
 	if err == nil && resp.StatusCode == 200 {
 		if m := drupalChangelogVersionRe.FindSubmatch(resp.Body); m != nil {
 			proof.Probe = append(proof.Probe, "CHANGELOG.txt")
@@ -163,7 +162,7 @@ func (d *DrupalDetector) probeVersion(ctx *models.DetectionContext, proof *model
 	}
 
 	// core/install.php (Drupal 8+)
-	resp, err = ctx.BrowserPool.NavigateAndCapture(context.Background(), base+"/core/install.php")
+	resp, err = ctx.BrowserPool.NavigateAndCapture(ctx.Ctx, base+"/core/install.php")
 	if err == nil && resp.StatusCode == 200 {
 		if m := drupalInstallVersionRe.FindSubmatch(resp.Body); m != nil {
 			proof.Probe = append(proof.Probe, "core/install.php")
@@ -172,7 +171,7 @@ func (d *DrupalDetector) probeVersion(ctx *models.DetectionContext, proof *model
 	}
 
 	// core/CHANGELOG.txt (Drupal 8+)
-	resp, err = ctx.BrowserPool.NavigateAndCapture(context.Background(), base+"/core/CHANGELOG.txt")
+	resp, err = ctx.BrowserPool.NavigateAndCapture(ctx.Ctx, base+"/core/CHANGELOG.txt")
 	if err == nil && resp.StatusCode == 200 {
 		if m := drupalCoreChangelogVersionRe.FindSubmatch(resp.Body); m != nil {
 			proof.Probe = append(proof.Probe, "core/CHANGELOG.txt")

@@ -34,9 +34,9 @@ type ScannerConfig struct {
 }
 
 type BrowserConfig struct {
-	PoolSize    int           `yaml:"pool_size"`
+	MaxPages    int           `yaml:"max_pages"`
 	PageTimeout time.Duration `yaml:"page_timeout"`
-	ControlURL  string        `yaml:"control_url"`
+	ControlURLs []string      `yaml:"control_urls"`
 }
 
 type DetectionsConfig struct {
@@ -63,9 +63,9 @@ func defaults() *Config {
 			ConcurrentScans: 50,
 		},
 		Browser: BrowserConfig{
-			PoolSize:    5,
+			MaxPages:    50,
 			PageTimeout: 15 * time.Second,
-			ControlURL:  "http://localhost:9222",
+			ControlURLs: []string{"http://localhost:9222"},
 		},
 		Detections: DetectionsConfig{
 			YAMLDir: "./detections/",
@@ -128,12 +128,6 @@ func loadEnvOverrides(cfg *Config) {
 		}
 		cfg.Scanner.UserHeaders["User-Agent"] = v
 	}
-	if v := os.Getenv("FINGERPRINTER_BROWSER_CONTROL_URL"); v != "" {
-		cfg.Browser.ControlURL = v
-	}
-	if v := os.Getenv("FINGERPRINTER_DETECTIONS_YAML_DIR"); v != "" {
-		cfg.Detections.YAMLDir = v
-	}
 	if v := os.Getenv("FINGERPRINTER_SCANNER_PROXY"); v != "" {
 		cfg.Scanner.Proxy = v
 	}
@@ -183,11 +177,11 @@ func validate(cfg *Config) error {
 	if cfg.Scanner.ConcurrentScans < 1 {
 		return fmt.Errorf("scanner.concurrent_scans must be at least 1")
 	}
-	if cfg.Browser.PoolSize < 1 {
-		return fmt.Errorf("browser.pool_size must be at least 1")
+	if cfg.Browser.MaxPages < 1 {
+		return fmt.Errorf("browser.max_pages must be at least 1")
 	}
-	if cfg.Browser.ControlURL == "" {
-		return fmt.Errorf("browser.control_url must not be empty")
+	if len(cfg.Browser.ControlURLs) == 0 {
+		return fmt.Errorf("browser.control_urls must not be empty")
 	}
 	return nil
 }

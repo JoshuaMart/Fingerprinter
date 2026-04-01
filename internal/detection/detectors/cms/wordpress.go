@@ -1,7 +1,6 @@
 package cms
 
 import (
-	"context"
 	"regexp"
 	"strings"
 
@@ -139,7 +138,7 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 		base := strings.TrimRight(ctx.BaseURL, "/")
 
 		// Try feed=atom
-		resp, err := ctx.BrowserPool.NavigateAndCapture(context.Background(), base+"/?feed=atom")
+		resp, err := ctx.BrowserPool.NavigateAndCapture(ctx.Ctx, base+"/?feed=atom")
 		if err == nil && resp.StatusCode == 200 {
 			if m := wpFeedVersionRe.FindSubmatch(resp.Body); m != nil {
 				version = string(m[1])
@@ -149,7 +148,7 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 
 		// If still no version, try wp-links-opml
 		if version == "" {
-			resp, err = ctx.BrowserPool.NavigateAndCapture(context.Background(), base+"/wp-links-opml.php")
+			resp, err = ctx.BrowserPool.NavigateAndCapture(ctx.Ctx, base+"/wp-links-opml.php")
 			if err == nil && resp.StatusCode == 200 {
 				if m := wpOPMLVersionRe.FindSubmatch(resp.Body); m != nil {
 					version = string(m[1])

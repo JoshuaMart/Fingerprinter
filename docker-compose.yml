@@ -4,7 +4,14 @@ services:
     command:
       - --ignore-certificate-errors
       - --remote-allow-origins=*
+      - --disable-dev-shm-usage
+      - --disable-gpu
     restart: always
+    shm_size: '512m'
+    deploy:
+      resources:
+        limits:
+          memory: 2G
     healthcheck:
       test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9222' 2>/dev/null"]
       interval: 5s
@@ -22,5 +29,3 @@ services:
     volumes:
       - ./detections:/app/detections:ro
       - ./config.yml:/app/config.yml:ro
-    environment:
-      - FINGERPRINTER_BROWSER_CONTROL_URL=http://chrome:9222
