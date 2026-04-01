@@ -3,6 +3,8 @@ package browser
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/JoshuaMart/fingerprinter/internal/models"
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/cdp"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/ysmood/gson"
 	"golang.org/x/net/html"
@@ -42,8 +45,8 @@ func NewPool(_ int, pageTimeout time.Duration, controlURL, proxyURL string, head
 	}
 	slog.Info("resolved browser WebSocket URL", "control", controlURL, "ws", wsURL)
 
-	b := rod.New().ControlURL(wsURL)
-	if err := b.Connect(); err != nil {
+	b, err := connectBrowser(wsURL)
+	if err != nil {
 		return nil, fmt.Errorf("connecting to browser at %s: %w", wsURL, err)
 	}
 
@@ -93,8 +96,8 @@ func (p *Pool) reconnect() error {
 		return fmt.Errorf("resolving browser WebSocket URL from %s: %w", p.controlURL, err)
 	}
 
-	b := rod.New().ControlURL(wsURL)
-	if err := b.Connect(); err != nil {
+	b, err := connectBrowser(wsURL)
+	if err != nil {
 		return fmt.Errorf("reconnecting to browser at %s: %w", wsURL, err)
 	}
 
@@ -544,6 +547,35 @@ func parseTitle(body []byte) *string {
 			}
 		}
 	}
+}
+
+// connectBrowser creates a Rod browser connected to the given WebSocket URL.
+// For wss:// URLs (e.g. Browserless cloud), we create the CDP client manually
+// with a valid Sec-WebSocket-Key header, because Rod's default implementation
+// sends a literal "nil" key that some proxies reject.
+func connectBrowser(wsURL string) (*rod.Browser, error) {
+	b := rod.New()
+
+	parsed, _ := url.Parse(wsURL)
+	if parsed != nil && (parsed.Scheme == "wss" || parsed.Scheme == "ws") {
+		key := make([]byte, 16)
+		_, _ = rand.Read(key)
+		header := http.Header{
+			"Sec-WebSocket-Key": {base64.StdEncoding.EncodeToString(key)},
+		}
+		client, err := cdp.StartWithURL(context.Background(), wsURL, header)
+		if err != nil {
+			return nil, err
+		}
+		b = b.Client(client)
+	} else {
+		b = b.ControlURL(wsURL)
+	}
+
+	if err := b.Connect(); err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 // resolveWSURL fetches /json/version from the CDP endpoint to get the full
