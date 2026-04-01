@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,9 +26,14 @@ import (
 )
 
 // backendConfig holds connection info for a Chrome instance.
+// HTTP backends (local Chrome) use a persistent connection with auto-reconnect.
+// WS/WSS backends (cloud providers) use ephemeral per-operation connections.
 type backendConfig struct {
-	controlURL string // original URL (http:// needs resolution, ws:// used as-is)
+	controlURL string // original URL
 	proxyURL   string
+	ephemeral  bool         // true for ws/wss backends
+	browser    *rod.Browser // persistent connection (HTTP backends only)
+	mu         sync.Mutex   // protects browser field
 }
 
 // Pool manages ephemeral browser connections distributed across one or more
@@ -35,7 +41,7 @@ type backendConfig struct {
 // work, and disconnects. This avoids stale connection issues with cloud
 // providers and keeps behavior uniform for local and remote backends.
 type Pool struct {
-	backends      []backendConfig
+	backends      []*backendConfig
 	headers       map[string]string
 	pageTimeout   time.Duration
 	pageSemaphore chan struct{} // limits concurrent browser connections
@@ -53,31 +59,42 @@ func NewPool(maxPages int, pageTimeout time.Duration, controlURLs []string, prox
 		return nil, fmt.Errorf("at least one browser control URL is required")
 	}
 
-	backends := make([]backendConfig, 0, len(controlURLs))
+	backends := make([]*backendConfig, 0, len(controlURLs))
 	for _, controlURL := range controlURLs {
-		// Health check: resolve, connect, create a page, disconnect
-		wsURL, err := resolveWSURL(controlURL)
-		if err != nil {
-			return nil, fmt.Errorf("resolving browser WebSocket URL from %s: %w", controlURL, err)
-		}
-		slog.Info("resolved browser WebSocket URL", "control", controlURL, "ws", wsURL)
+		parsed, _ := url.Parse(controlURL)
+		ephemeral := parsed != nil && (parsed.Scheme == "ws" || parsed.Scheme == "wss")
 
-		b, err := connectBrowser(wsURL)
-		if err != nil {
-			return nil, fmt.Errorf("connecting to browser at %s: %w", wsURL, err)
-		}
-		page, err := b.Page(proto.TargetCreateTarget{URL: "about:blank"})
-		if err != nil {
-			_ = b.Close()
-			return nil, fmt.Errorf("browser health check failed for %s: %w", controlURL, err)
-		}
-		_ = page.Close()
-		_ = b.Close()
-
-		backends = append(backends, backendConfig{
+		cfg := &backendConfig{
 			controlURL: controlURL,
 			proxyURL:   proxyURL,
-		})
+			ephemeral:  ephemeral,
+		}
+
+		if ephemeral {
+			// Cloud: health check with ephemeral connect/disconnect
+			b, err := connectBrowser(controlURL)
+			if err != nil {
+				return nil, fmt.Errorf("connecting to browser at %s: %w", controlURL, err)
+			}
+			page, err := b.Page(proto.TargetCreateTarget{URL: "about:blank"})
+			if err != nil {
+				_ = b.Close()
+				return nil, fmt.Errorf("browser health check failed for %s: %w", controlURL, err)
+			}
+			_ = page.Close()
+			_ = b.Close()
+			slog.Info("browser backend ready (ephemeral)", "url", controlURL)
+		} else {
+			// Local: resolve WS URL and keep persistent connection
+			b, err := connectToLocal(controlURL, proxyURL)
+			if err != nil {
+				return nil, fmt.Errorf("connecting to browser at %s: %w", controlURL, err)
+			}
+			cfg.browser = b
+			slog.Info("browser backend ready (persistent)", "url", controlURL)
+		}
+
+		backends = append(backends, cfg)
 	}
 
 	slog.Info("browser pool initialized", "backends", len(backends), "max_pages", maxPages)
@@ -91,13 +108,69 @@ func NewPool(maxPages int, pageTimeout time.Duration, controlURLs []string, prox
 }
 
 // nextBackend returns the next backend config via round-robin.
-func (p *Pool) nextBackend() backendConfig {
+func (p *Pool) nextBackend() *backendConfig {
 	idx := p.robin.Add(1) - 1
 	return p.backends[idx%uint64(len(p.backends))]
 }
 
-// withBrowser creates an ephemeral browser connection, calls fn, then disconnects.
-// It acquires the semaphore to limit concurrent connections.
+// connectToLocal resolves the WS URL, connects, and optionally sets up proxy.
+func connectToLocal(controlURL, proxyURL string) (*rod.Browser, error) {
+	wsURL, err := resolveWSURL(controlURL)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("resolved browser WebSocket URL", "control", controlURL, "ws", wsURL)
+
+	b, err := connectBrowser(wsURL)
+	if err != nil {
+		return nil, err
+	}
+
+	if proxyURL != "" {
+		res, err := proto.TargetCreateBrowserContext{
+			ProxyServer:     proxyURL,
+			DisposeOnDetach: true,
+		}.Call(b)
+		if err != nil {
+			_ = b.Close()
+			return nil, fmt.Errorf("creating browser context with proxy: %w", err)
+		}
+		ctx := *b
+		ctx.BrowserContextID = res.BrowserContextID
+		b = &ctx
+	}
+
+	// Health check
+	page, err := b.Page(proto.TargetCreateTarget{URL: "about:blank"})
+	if err != nil {
+		_ = b.Close()
+		return nil, fmt.Errorf("health check failed: %w", err)
+	}
+	_ = page.Close()
+
+	return b, nil
+}
+
+// reconnect re-establishes a persistent connection for a local backend.
+func (cfg *backendConfig) reconnect() error {
+	cfg.mu.Lock()
+	defer cfg.mu.Unlock()
+
+	if cfg.browser != nil {
+		_ = cfg.browser.Close()
+	}
+
+	b, err := connectToLocal(cfg.controlURL, cfg.proxyURL)
+	if err != nil {
+		return err
+	}
+	cfg.browser = b
+	return nil
+}
+
+// withBrowser provides a browser to fn.
+// - HTTP backends (local Chrome): reuses persistent connection, reconnects on failure
+// - WS/WSS backends (cloud): creates ephemeral connection per call
 func (p *Pool) withBrowser(ctx context.Context, fn func(b *rod.Browser) error) error {
 	// Acquire connection slot
 	select {
@@ -109,18 +182,20 @@ func (p *Pool) withBrowser(ctx context.Context, fn func(b *rod.Browser) error) e
 
 	cfg := p.nextBackend()
 
-	wsURL, err := resolveWSURL(cfg.controlURL)
-	if err != nil {
-		return fmt.Errorf("resolving browser WebSocket URL from %s: %w", cfg.controlURL, err)
+	if cfg.ephemeral {
+		return p.withEphemeralBrowser(ctx, cfg, fn)
 	}
+	return p.withPersistentBrowser(ctx, cfg, fn)
+}
 
-	b, err := connectBrowser(wsURL)
+// withEphemeralBrowser connects, calls fn, disconnects. For cloud backends.
+func (p *Pool) withEphemeralBrowser(_ context.Context, cfg *backendConfig, fn func(b *rod.Browser) error) error {
+	b, err := connectBrowser(cfg.controlURL)
 	if err != nil {
-		return fmt.Errorf("connecting to browser at %s: %w", wsURL, err)
+		return fmt.Errorf("connecting to browser at %s: %w", cfg.controlURL, err)
 	}
 	defer func() { _ = b.Close() }()
 
-	// If proxy is configured, create a dedicated browser context
 	if cfg.proxyURL != "" {
 		res, err := proto.TargetCreateBrowserContext{
 			ProxyServer:     cfg.proxyURL,
@@ -135,6 +210,22 @@ func (p *Pool) withBrowser(ctx context.Context, fn func(b *rod.Browser) error) e
 	}
 
 	return fn(b)
+}
+
+// withPersistentBrowser uses the persistent connection, reconnecting on failure.
+// For local Chrome backends.
+func (p *Pool) withPersistentBrowser(_ context.Context, cfg *backendConfig, fn func(b *rod.Browser) error) error {
+	err := fn(cfg.browser)
+	if err == nil {
+		return nil
+	}
+
+	// If fn failed, try reconnecting once and retry
+	slog.Warn("operation failed, attempting reconnect", "error", err, "backend", cfg.controlURL)
+	if reconnErr := cfg.reconnect(); reconnErr != nil {
+		return fmt.Errorf("reconnect failed: %w (original: %w)", reconnErr, err)
+	}
+	return fn(cfg.browser)
 }
 
 // createPage creates a new blank page on the given browser and applies headers.
