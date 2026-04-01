@@ -218,11 +218,16 @@ func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *N
 		return fmt.Errorf("navigating to %s: %w", targetURL, err)
 	}
 
-	// Wait for page to be fully ready: load event + network idle + DOM stable.
-	// WaitStable runs all three checks in parallel and returns when all agree.
-	if err := navPage.WaitStable(500 * time.Millisecond); err != nil {
-		slog.Warn("page WaitStable failed, continuing", "url", targetURL, "error", err)
+	// Wait for page to be ready using a two-phase adaptive strategy:
+	// 1. WaitLoad ensures scripts/subresources are loaded (baseline)
+	// 2. In parallel: short network idle (200ms grace) + MutationObserver-based
+	//    DOM stability (150ms of no mutations). Both must be satisfied.
+	// This is faster than fixed-duration waits on static sites while still
+	// catching SPA hydration and async data fetching.
+	if err := navPage.WaitLoad(); err != nil {
+		slog.Warn("page WaitLoad failed, continuing", "url", targetURL, "error", err)
 	}
+	waitPageReady(navPage)
 
 	// Post-navigation operations use the parent context (not the page timeout)
 	// so they don't fail if navigation consumed the entire page_timeout budget.
@@ -401,10 +406,7 @@ func (p *Pool) NavigateCaptureAndEval(ctx context.Context, targetURL string, jsE
 	if err := navPage.WaitLoad(); err != nil {
 		slog.Warn("page WaitLoad failed", "url", targetURL, "error", err)
 	}
-
-	// Short network idle wait — we only need the response, not full DOM stability
-	wait := navPage.WaitRequestIdle(300*time.Millisecond, nil, nil, nil)
-	wait()
+	waitPageReady(navPage)
 
 	chain := capture.Chain()
 	if len(chain) == 0 {
@@ -545,6 +547,53 @@ func parseTitle(body []byte) *string {
 		}
 	}
 }
+
+// waitPageReady waits for both network quiet and DOM stability in parallel.
+// It returns when both conditions are met or the page's context expires.
+func waitPageReady(page *rod.Page) {
+	done := make(chan struct{}, 2)
+
+	// Signal 1: network idle for 200ms
+	go func() {
+		wait := page.WaitRequestIdle(200*time.Millisecond, nil, nil, nil)
+		wait()
+		done <- struct{}{}
+	}()
+
+	// Signal 2: DOM stability via MutationObserver (no mutations for 150ms)
+	go func() {
+		_, err := page.Eval(domStableScript)
+		if err != nil {
+			slog.Debug("DOM stability check failed, skipping", "error", err)
+		}
+		done <- struct{}{}
+	}()
+
+	// Wait for both signals
+	<-done
+	<-done
+}
+
+// domStableScript injects a MutationObserver that resolves when the DOM has
+// been quiet (no childList/subtree mutations) for 150ms. A 5s hard cap
+// prevents infinite waits on sites with continuous DOM mutations (tickers,
+// animations, live feeds).
+const domStableScript = `() => new Promise(resolve => {
+	const QUIET = 150, CAP = 5000;
+	let timer = setTimeout(resolve, QUIET);
+	const cap = setTimeout(() => { observer.disconnect(); resolve(); }, CAP);
+	const observer = new MutationObserver(() => {
+		clearTimeout(timer);
+		timer = setTimeout(() => { observer.disconnect(); clearTimeout(cap); resolve(); }, QUIET);
+	});
+	const target = document.body || document.documentElement;
+	if (target) {
+		observer.observe(target, { childList: true, subtree: true });
+	} else {
+		clearTimeout(cap);
+		resolve();
+	}
+})`
 
 // connectBrowser creates a Rod browser connected to the given WebSocket URL.
 // For wss:// URLs (e.g. Browserless cloud), we create the CDP client manually
