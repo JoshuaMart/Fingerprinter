@@ -128,9 +128,6 @@ func loadEnvOverrides(cfg *Config) {
 		}
 		cfg.Scanner.UserHeaders["User-Agent"] = v
 	}
-	if v := os.Getenv("FINGERPRINTER_DETECTIONS_YAML_DIR"); v != "" {
-		cfg.Detections.YAMLDir = v
-	}
 	if v := os.Getenv("FINGERPRINTER_SCANNER_PROXY"); v != "" {
 		cfg.Scanner.Proxy = v
 	}
