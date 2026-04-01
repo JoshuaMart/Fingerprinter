@@ -96,8 +96,9 @@ scanner:
   # proxy: "http://127.0.0.1:8080"
 
 browser:
-  control_url: "http://localhost:9222"
-  pool_size: 5
+  control_urls:
+    - "http://localhost:9222"
+  max_pages: 50
   page_timeout: 15s
 
 detections:
@@ -129,8 +130,6 @@ All configuration values can be overridden with environment variables:
 |---|---|
 | `FINGERPRINTER_SERVER_PORT` | HTTP server port |
 | `FINGERPRINTER_SCANNER_USER_AGENT` | User-Agent header |
-| `FINGERPRINTER_BROWSER_CONTROL_URL` | Browser CDP URL (e.g. `http://localhost:9222`) |
-| `FINGERPRINTER_DETECTIONS_YAML_DIR` | Path to YAML detections directory |
 | `FINGERPRINTER_SCANNER_PROXY` | HTTP proxy URL (e.g. `http://127.0.0.1:8080`) |
 | `FINGERPRINTER_REDIS_URL` | Redis URL (e.g. `redis://localhost:6379`) |
 | `FINGERPRINTER_REDIS_STREAM` | Redis Stream name (default: `scans`) |
@@ -363,11 +362,12 @@ type Detector interface {
 }
 
 type DetectionContext struct {
-    Responses   []ChainedResponse      // All hops in the redirect chain
-    Document    *goquery.Document      // Parsed rendered DOM (post-JS)
-    HTTPClient  *http.Client           // HTTP client for direct requests
-    BrowserPool BrowserNavigator       // Navigate to URLs via browser pool
-    BrowserPage *rod.Page              // Current page for JS evaluation
+    Ctx            context.Context        // Scan context (cancelled on timeout)
+    Responses      []ChainedResponse      // All hops in the redirect chain
+    Document       *goquery.Document      // Parsed rendered DOM (post-JS)
+    HTTPClient     *http.Client           // HTTP client for direct requests
+    BrowserPool    BrowserNavigator       // Navigate to URLs via browser pool
+    BrowserPage    *rod.Page              // Current page for JS evaluation
     BaseURL        string                 // Final URL after redirects
     SkipPathChecks bool                   // Skip path-based checks (404, paths, metadata)
 }
@@ -397,7 +397,7 @@ make build-all  # Cross-compile all platforms
 make docker     # Build Docker image
 ```
 
-Browser-dependent tests (browser, scanner, server packages) require a running CDP-compatible instance. Set `FINGERPRINTER_BROWSER_CONTROL_URL` or ensure `http://localhost:9222` is available.
+Browser-dependent tests (browser, scanner, server packages) require a running CDP-compatible instance on `http://localhost:9222`.
 
 ## License
 
