@@ -63,7 +63,7 @@ func defaults() *Config {
 			ConcurrentScans: 50,
 		},
 		Browser: BrowserConfig{
-			MaxPages:    50,
+			MaxPages:    150,
 			PageTimeout: 15 * time.Second,
 			ControlURLs: []string{"http://localhost:9222"},
 		},

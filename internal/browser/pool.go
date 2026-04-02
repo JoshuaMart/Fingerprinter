@@ -213,19 +213,34 @@ func (p *Pool) withEphemeralBrowser(_ context.Context, cfg *backendConfig, fn fu
 }
 
 // withPersistentBrowser uses the persistent connection, reconnecting on failure.
-// For local Chrome backends.
-func (p *Pool) withPersistentBrowser(_ context.Context, cfg *backendConfig, fn func(b *rod.Browser) error) error {
+// For local Chrome backends. Retries with backoff to survive Chrome restarts.
+func (p *Pool) withPersistentBrowser(ctx context.Context, cfg *backendConfig, fn func(b *rod.Browser) error) error {
 	err := fn(cfg.browser)
 	if err == nil {
 		return nil
 	}
 
-	// If fn failed, try reconnecting once and retry
-	slog.Warn("operation failed, attempting reconnect", "error", err, "backend", cfg.controlURL)
-	if reconnErr := cfg.reconnect(); reconnErr != nil {
-		return fmt.Errorf("reconnect failed: %w (original: %w)", reconnErr, err)
+	// Retry with backoff — Chrome may be restarting (restart: always)
+	backoff := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
+	for _, delay := range backoff {
+		slog.Warn("operation failed, retrying after backoff", "error", err, "backend", cfg.controlURL, "delay", delay)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+
+		if reconnErr := cfg.reconnect(); reconnErr != nil {
+			continue
+		}
+
+		err = fn(cfg.browser)
+		if err == nil {
+			return nil
+		}
 	}
-	return fn(cfg.browser)
+	return fmt.Errorf("all retries exhausted for %s: %w", cfg.controlURL, err)
 }
 
 // createPage creates a new blank page on the given browser and applies headers.

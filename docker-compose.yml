@@ -1,14 +1,21 @@
 x-chrome: &chrome
   image: chromedp/headless-shell
+  init: true
   command:
     - --ignore-certificate-errors
     - --remote-allow-origins=*
     - --disable-dev-shm-usage
     - --disable-gpu
+    - --disable-background-networking
+    - --disable-default-apps
+    - --disable-extensions
+    - --disable-sync
+    - --no-first-run
+    - --metrics-recording-only
   restart: always
   logging:
     driver: "none"
-  shm_size: '512m'
+  shm_size: '2g'
   deploy:
     resources:
       limits:
