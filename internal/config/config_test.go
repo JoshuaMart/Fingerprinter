@@ -19,8 +19,8 @@ func TestDefaults(t *testing.T) {
 	if cfg.Scanner.MaxRedirects != 10 {
 		t.Errorf("expected default max_redirects 10, got %d", cfg.Scanner.MaxRedirects)
 	}
-	if cfg.Scanner.RequestTimeout != 10*time.Second {
-		t.Errorf("expected default request_timeout 10s, got %v", cfg.Scanner.RequestTimeout)
+	if cfg.Scanner.RequestTimeout != 30*time.Second {
+		t.Errorf("expected default request_timeout 30s, got %v", cfg.Scanner.RequestTimeout)
 	}
 	if cfg.Scanner.Headers["User-Agent"] != "Fingerprinter/1.0" {
 		t.Errorf("expected default User-Agent header, got %v", cfg.Scanner.Headers)
