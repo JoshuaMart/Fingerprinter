@@ -1,10 +1,10 @@
 server:
   port: 3001
-  read_timeout: 30s
+  read_timeout: 10s
 
 scanner:
   max_redirects: 10
-  request_timeout: 10s
+  request_timeout: 30s
   headers:
     User-Agent: "Fingerprinter/1.0"
     # Accept-Language: "en-US,en;q=0.9"
