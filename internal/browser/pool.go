@@ -222,18 +222,19 @@ func (p *Pool) withEphemeralBrowser(_ context.Context, cfg *backendConfig, fn fu
 	return fn(b)
 }
 
-// withPersistentBrowser uses the persistent connection, reconnecting on failure.
-// For local Chrome backends. Retries with backoff to survive Chrome restarts.
+// withPersistentBrowser uses the persistent connection, reconnecting only on
+// connection errors (dead WebSocket). Navigation errors (ERR_NAME_NOT_RESOLVED,
+// ERR_ABORTED, timeouts) are returned immediately without reconnect.
 func (p *Pool) withPersistentBrowser(ctx context.Context, cfg *backendConfig, fn func(b *rod.Browser) error) error {
 	err := fn(cfg.browser)
-	if err == nil {
-		return nil
+	if err == nil || !isConnectionError(err) {
+		return err
 	}
 
-	// Retry with backoff — Chrome may be restarting (restart: always)
+	// Connection is dead — retry with backoff (Chrome may be restarting)
 	backoff := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
 	for _, delay := range backoff {
-		slog.Warn("operation failed, retrying after backoff", "error", err, "backend", cfg.controlURL, "delay", delay)
+		slog.Warn("connection error, reconnecting after backoff", "error", err, "backend", cfg.controlURL, "delay", delay)
 
 		select {
 		case <-ctx.Done():
@@ -246,11 +247,34 @@ func (p *Pool) withPersistentBrowser(ctx context.Context, cfg *backendConfig, fn
 		}
 
 		err = fn(cfg.browser)
-		if err == nil {
-			return nil
+		if err == nil || !isConnectionError(err) {
+			return err
 		}
 	}
-	return fmt.Errorf("all retries exhausted for %s: %w", cfg.controlURL, err)
+	return fmt.Errorf("all reconnect retries exhausted for %s: %w", cfg.controlURL, err)
+}
+
+// isConnectionError returns true if the error indicates a dead WebSocket/CDP
+// connection, as opposed to a normal navigation or operation error.
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+	markers := []string{
+		"use of closed network connection",
+		"connection reset",
+		"broken pipe",
+		"write tcp",
+		"read tcp",
+	}
+	for _, m := range markers {
+		if strings.Contains(errStr, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // createPage creates a new blank page on the given browser and applies headers.
