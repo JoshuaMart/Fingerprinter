@@ -6,6 +6,8 @@ x-chrome: &chrome
     - --disable-dev-shm-usage
     - --disable-gpu
   restart: always
+  logging:
+    driver: "none"
   shm_size: '512m'
   deploy:
     resources:
