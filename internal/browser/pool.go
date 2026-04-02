@@ -21,9 +21,19 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/cdp"
 	"github.com/go-rod/rod/lib/proto"
+	"github.com/go-rod/rod/lib/utils"
 	"github.com/ysmood/gson"
 	"golang.org/x/net/html"
 )
+
+func init() {
+	// Rod's default Panic handler crashes the process when a persistent CDP
+	// WebSocket receives non-JSON data (connection drop, proxy error).
+	// Override to log instead, allowing reconnect with backoff to recover.
+	utils.Panic = func(v interface{}) {
+		slog.Error("rod internal error (recovered)", "error", v)
+	}
+}
 
 // backendConfig holds connection info for a Chrome instance.
 // HTTP backends (local Chrome) use a persistent connection with auto-reconnect.
