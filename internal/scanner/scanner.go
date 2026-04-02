@@ -86,7 +86,7 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 	// Apply timeout
 	timeout := time.Duration(req.Options.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
-		timeout = s.cfg.Server.ReadTimeout
+		timeout = s.cfg.Scanner.RequestTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

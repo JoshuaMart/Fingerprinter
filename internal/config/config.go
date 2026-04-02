@@ -56,7 +56,7 @@ func defaults() *Config {
 		},
 		Scanner: ScannerConfig{
 			MaxRedirects:   10,
-			RequestTimeout: 10 * time.Second,
+			RequestTimeout: 30 * time.Second,
 			Headers: map[string]string{
 				"User-Agent": "Fingerprinter/1.0",
 			},
