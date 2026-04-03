@@ -122,6 +122,26 @@ func TestWordPressBodyEmbedVersion(t *testing.T) {
 	}
 }
 
+func TestWordPressBodyEmojiVersion(t *testing.T) {
+	det := &WordPressDetector{}
+	ctx := &models.DetectionContext{
+		Responses: []models.ChainedResponse{
+			{Body: []byte(`<script>window._wpemojiSettings={"baseUrl":"https:\/\/s.w.org\/images\/core\/emoji\/15.0.3\/72x72\/","ext":".png","svgUrl":"https:\/\/s.w.org\/images\/core\/emoji\/15.0.3\/svg\/","svgExt":".svg","source":{"concatemoji":"https:\/\/example.com\/wp-includes\/js\/wp-emoji-release.min.js?ver=6.5.3"}};</script>`)},
+		},
+	}
+
+	res, err := det.Detect(ctx)
+	if err != nil {
+		t.Fatalf("Detect failed: %v", err)
+	}
+	if !res.Detected {
+		t.Fatal("expected WordPress detected via emoji script")
+	}
+	if res.Version != "6.5.3" {
+		t.Errorf("expected version 6.5.3, got %q", res.Version)
+	}
+}
+
 func TestWordPressMeta(t *testing.T) {
 	det := &WordPressDetector{}
 	doc, _ := goquery.NewDocumentFromReader(strings.NewReader(
@@ -286,6 +306,77 @@ func TestWordPressPathProbeOPML(t *testing.T) {
 	}
 	if res.Version != "6.2.0" {
 		t.Errorf("expected version 6.2.0, got %q", res.Version)
+	}
+}
+
+func TestWordPressPathProbeReadme(t *testing.T) {
+	det := &WordPressDetector{}
+	base := "https://example.com"
+
+	nav := &mockBrowserNavigator{
+		responses: map[string]*models.ChainedResponse{
+			base + "/?feed=atom":        {StatusCode: 404},
+			base + "/wp-links-opml.php": {StatusCode: 404},
+			base + "/readme.html": {
+				StatusCode: 200,
+				Body:       []byte(`<h1 id="logo">WordPress</h1><br /> Version 6.7`),
+			},
+		},
+	}
+
+	ctx := &models.DetectionContext{
+		Responses: []models.ChainedResponse{
+			{Body: []byte(`<link rel="stylesheet" href="/wp-content/themes/style.css">`)},
+		},
+		BrowserPool: nav,
+		BaseURL:     base,
+	}
+
+	res, err := det.Detect(ctx)
+	if err != nil {
+		t.Fatalf("Detect failed: %v", err)
+	}
+	if !res.Detected {
+		t.Fatal("expected WordPress detected")
+	}
+	if res.Version != "6.7" {
+		t.Errorf("expected version 6.7, got %q", res.Version)
+	}
+}
+
+func TestWordPressPathProbeLoginAssets(t *testing.T) {
+	det := &WordPressDetector{}
+	base := "https://example.com"
+
+	nav := &mockBrowserNavigator{
+		responses: map[string]*models.ChainedResponse{
+			base + "/?feed=atom":        {StatusCode: 404},
+			base + "/wp-links-opml.php": {StatusCode: 404},
+			base + "/readme.html":       {StatusCode: 404},
+			base + "/wp-login.php": {
+				StatusCode: 200,
+				Body:       []byte(`<link rel='stylesheet' id='dashicons-css' href='https://example.com/wp-includes/css/dashicons.min.css?ver=6.4.2' media='all' />`),
+			},
+		},
+	}
+
+	ctx := &models.DetectionContext{
+		Responses: []models.ChainedResponse{
+			{Body: []byte(`<link rel="stylesheet" href="/wp-content/themes/style.css">`)},
+		},
+		BrowserPool: nav,
+		BaseURL:     base,
+	}
+
+	res, err := det.Detect(ctx)
+	if err != nil {
+		t.Fatalf("Detect failed: %v", err)
+	}
+	if !res.Detected {
+		t.Fatal("expected WordPress detected")
+	}
+	if res.Version != "6.4.2" {
+		t.Errorf("expected version 6.4.2, got %q", res.Version)
 	}
 }
 

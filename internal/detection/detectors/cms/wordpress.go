@@ -21,13 +21,16 @@ var (
 		regexp.MustCompile(`class="[^"]*wp-block-`),
 	}
 	wpEmbedVersionRe = regexp.MustCompile(`wp-embed\.min\.js\?ver=([\d.]+)`)
+	wpEmojiVersionRe = regexp.MustCompile(`wp-emoji-release\.min\.js\?ver=([\d.]+)`)
 
 	wpMetaGeneratorRe = regexp.MustCompile(`(?i)WordPress`)
 	wpMetaVersionRe   = regexp.MustCompile(`([\d.]+)`)
 
 	wpFeedVersionRe = regexp.MustCompile(`<generator[^>]+version="([\d.]+)"`)
 
-	wpOPMLVersionRe = regexp.MustCompile(`WordPress/([\d.]+)`)
+	wpOPMLVersionRe     = regexp.MustCompile(`WordPress/([\d.]+)`)
+	wpReadmeVersionRe   = regexp.MustCompile(`(?i)Version\s+([\d.]+)`)
+	wpLoginAssetVersionRe = regexp.MustCompile(`\?ver=([\d.]+)`)
 )
 
 var wpJSExpressions = []string{
@@ -95,6 +98,13 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 				proof.Body = appendUniqueStr(proof.Body, wpEmbedVersionRe.String())
 			}
 		}
+		if version == "" {
+			if m := wpEmojiVersionRe.FindSubmatch(body); m != nil {
+				version = string(m[1])
+				detected = true
+				proof.Body = appendUniqueStr(proof.Body, wpEmojiVersionRe.String())
+			}
+		}
 	}
 
 	// 3. Meta (generator)
@@ -153,6 +163,28 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 				if m := wpOPMLVersionRe.FindSubmatch(resp.Body); m != nil {
 					version = string(m[1])
 					proof.Probe = append(proof.Probe, "wp-links-opml")
+				}
+			}
+		}
+
+		// Try readme.html
+		if version == "" {
+			resp, err = ctx.BrowserPool.NavigateAndCapture(ctx.Ctx, base+"/readme.html")
+			if err == nil && resp.StatusCode == 200 {
+				if m := wpReadmeVersionRe.FindSubmatch(resp.Body); m != nil {
+					version = string(m[1])
+					proof.Probe = append(proof.Probe, "readme.html")
+				}
+			}
+		}
+
+		// Try wp-login.php assets ver= param
+		if version == "" {
+			resp, err = ctx.BrowserPool.NavigateAndCapture(ctx.Ctx, base+"/wp-login.php")
+			if err == nil && resp.StatusCode == 200 {
+				if m := wpLoginAssetVersionRe.FindSubmatch(resp.Body); m != nil {
+					version = string(m[1])
+					proof.Probe = append(proof.Probe, "wp-login.php")
 				}
 			}
 		}
