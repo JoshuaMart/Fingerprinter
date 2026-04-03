@@ -28,8 +28,8 @@ var (
 
 	wpFeedVersionRe = regexp.MustCompile(`<generator[^>]+version="([\d.]+)"`)
 
-	wpOPMLVersionRe     = regexp.MustCompile(`WordPress/([\d.]+)`)
-	wpReadmeVersionRe   = regexp.MustCompile(`(?i)Version\s+([\d.]+)`)
+	wpOPMLVersionRe       = regexp.MustCompile(`WordPress/([\d.]+)`)
+	wpReadmeVersionRe     = regexp.MustCompile(`(?i)Version\s+([\d.]+)`)
 	wpLoginAssetVersionRe = regexp.MustCompile(`\?ver=([\d.]+)`)
 )
 
