@@ -16,6 +16,7 @@ import (
 
 	"encoding/json"
 	"io"
+	"net"
 
 	"github.com/JoshuaMart/fingerprinter/internal/models"
 	"github.com/go-rod/rod"
@@ -826,12 +827,28 @@ func resolveWSURL(controlURL string) (string, error) {
 		return "", fmt.Errorf("/json/version did not return webSocketDebuggerUrl")
 	}
 
-	// Replace the host (Chrome returns localhost) with the actual control host
+	// Replace the host (Chrome returns localhost) with the actual control host.
+	// Chrome rejects the WebSocket handshake if the Host header is neither
+	// localhost nor an IP, so resolve the hostname to an IP first.
 	wsURL, err := url.Parse(info.WebSocketDebuggerURL)
 	if err != nil {
 		return "", fmt.Errorf("parsing WebSocket URL: %w", err)
 	}
-	wsURL.Host = parsed.Host
+
+	host := parsed.Hostname()
+	port := parsed.Port()
+	if net.ParseIP(host) == nil && host != "localhost" {
+		ips, err := net.LookupIP(host)
+		if err != nil || len(ips) == 0 {
+			return "", fmt.Errorf("resolving host %s: %w", host, err)
+		}
+		host = ips[0].String()
+	}
+	if port != "" {
+		wsURL.Host = net.JoinHostPort(host, port)
+	} else {
+		wsURL.Host = host
+	}
 
 	return wsURL.String(), nil
 }
