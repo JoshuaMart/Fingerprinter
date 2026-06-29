@@ -323,6 +323,7 @@ type NavigateResult struct {
 	WebSockets       []string
 	Chain            []models.ChainedResponse
 	ExternalRedirect bool
+	NavigationFailed bool              // navigation errored, but a partial chain was captured
 	BrowserCookies   map[string]string // Cookies from browser cookie jar (name → value)
 }
 
@@ -369,28 +370,48 @@ func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *N
 		// Use page timeout only for navigation + wait phases
 		navPage := page.Timeout(p.pageTimeout)
 
+		navFailed := false
 		if err := navPage.Navigate(targetURL); err != nil {
-			return fmt.Errorf("navigating to %s: %w", targetURL, err)
+			// Navigation can fail after the browser already captured useful
+			// redirect hops — e.g. a 301 to a dead port (ERR_CONNECTION_REFUSED)
+			// or an unreachable final host (context deadline exceeded). If at
+			// least one response was captured, continue with the partial chain
+			// instead of failing the whole scan; otherwise nothing was
+			// reachable, so propagate the error.
+			if len(capture.Chain()) == 0 {
+				return fmt.Errorf("navigating to %s: %w", targetURL, err)
+			}
+			slog.Warn("navigation failed, continuing with partial chain",
+				"url", targetURL, "error", err, "hops", len(capture.Chain()))
+			navFailed = true
 		}
 
 		// Wait for page to be ready using adaptive strategy:
-		// WaitLoad (baseline) + network idle (200ms) + DOM stability (150ms MutationObserver)
-		if err := navPage.WaitLoad(); err != nil {
-			slog.Warn("page WaitLoad failed, continuing", "url", targetURL, "error", err)
+		// WaitLoad (baseline) + network idle (200ms) + DOM stability (150ms MutationObserver).
+		// Skip when navigation failed — the page is in an error state and the
+		// captured redirect hops are all we have.
+		if !navFailed {
+			if err := navPage.WaitLoad(); err != nil {
+				slog.Warn("page WaitLoad failed, continuing", "url", targetURL, "error", err)
+			}
+			waitPageReady(navPage)
 		}
-		waitPageReady(navPage)
 
 		// Post-navigation operations use the parent context (not the page timeout)
 
-		// Check for client-side redirect to a different host
+		// Check for client-side redirect to a different host. Skipped on a failed
+		// navigation, where page.Info() may report an empty/error URL and would
+		// falsely look out-of-scope.
 		externalRedirect := false
-		info, err := page.Info()
-		if err == nil {
-			if parsed, parseErr := url.Parse(info.URL); parseErr == nil {
-				if parsed.Hostname() != targetHost {
-					slog.Warn("browser redirected to external host",
-						"from", targetHost, "to", parsed.Hostname())
-					externalRedirect = true
+		if !navFailed {
+			info, err := page.Info()
+			if err == nil {
+				if parsed, parseErr := url.Parse(info.URL); parseErr == nil {
+					if parsed.Hostname() != targetHost {
+						slog.Warn("browser redirected to external host",
+							"from", targetHost, "to", parsed.Hostname())
+						externalRedirect = true
+					}
 				}
 			}
 		}
@@ -427,6 +448,7 @@ func (p *Pool) Navigate(ctx context.Context, targetURL string, fn func(result *N
 			WebSockets:       capture.WebSockets(),
 			Chain:            chainResponses,
 			ExternalRedirect: externalRedirect,
+			NavigationFailed: navFailed,
 			BrowserCookies:   browserCookies,
 		}
 
