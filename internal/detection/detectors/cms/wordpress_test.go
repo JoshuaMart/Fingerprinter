@@ -34,6 +34,10 @@ func TestWordPressHeaders(t *testing.T) {
 			name:    "x-powered-by WordPress",
 			headers: http.Header{"X-Powered-By": {"WordPress"}},
 		},
+		{
+			name:    "x-redirect-by WordPress",
+			headers: http.Header{"X-Redirect-By": {"WordPress"}},
+		},
 	}
 
 	for _, tt := range tests {

@@ -80,6 +80,12 @@ func (d *WordPressDetector) Detect(ctx *models.DetectionContext) (*models.Detect
 			detected = true
 			proof.Headers = appendUniqueStr(proof.Headers, "x-powered-by")
 		}
+		// X-Redirect-By: WordPress is set on redirect responses (e.g. 301 from
+		// a canonical/HTTPS redirect), where no body or DOM is available.
+		if v := resp.RawHeaders.Get("x-redirect-by"); v != "" && wpPoweredByRe.MatchString(v) {
+			detected = true
+			proof.Headers = appendUniqueStr(proof.Headers, "x-redirect-by")
+		}
 	}
 
 	// 2. Body
