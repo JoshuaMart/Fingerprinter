@@ -114,13 +114,30 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 			return fmt.Errorf("no responses received")
 		}
 
+		// Enforce max_redirects against the browser-captured chain. Chrome
+		// follows redirects natively, so we cap the chain after the fact:
+		// keep at most maxRedirects hops (maxRedirects+1 responses).
+		maxRedirects := s.effectiveMaxRedirects(req.Options)
+		if len(responses) > maxRedirects+1 {
+			slog.Warn("redirect chain exceeds max_redirects, truncating",
+				"url", req.URL, "redirects", len(responses)-1, "max", maxRedirects)
+			responses = responses[:maxRedirects+1]
+		}
+
+		// When the page is not usable (external redirect or failed navigation),
+		// skip every step that relies on the live page or on probing the target:
+		// HTML/DOM, JS eval, the 404 probe, and metadata fetching. Detection then
+		// runs only against the captured chain headers, cookies and body.
+		pageUnusable := navResult.ExternalRedirect || navResult.NavigationFailed
+
 		finalResp := &responses[len(responses)-1]
 		baseURL := finalResp.URL
 
 		// Extract rendered HTML for goquery document
-		// Skip if external redirect — the page content belongs to the external host
+		// Skip if the page is unusable — the content is an error page or belongs
+		// to an external host.
 		var doc *goquery.Document
-		if !navResult.ExternalRedirect {
+		if !pageUnusable {
 			renderedHTML, htmlErr := navResult.Page.HTML()
 			if htmlErr != nil {
 				slog.Warn("failed to extract rendered HTML", "error", htmlErr)
@@ -142,14 +159,14 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 		// Skip if external redirect — JS context belongs to the external host
 		jsResults := make(map[string]string)
 		jsExpressions := s.engine.CollectJSExpressions()
-		if !navResult.ExternalRedirect {
+		if !pageUnusable {
 			s.evalJS(navResult.Page, jsExpressions, jsResults)
 		}
 
 		// 404 probe via browser (separate page) — also evaluate JS on the 404 page
 		detResponses := make([]models.ChainedResponse, len(responses))
 		copy(detResponses, responses)
-		skipPaths := (req.Options != nil && req.Options.SkipPathChecks) || navResult.ExternalRedirect
+		skipPaths := (req.Options != nil && req.Options.SkipPathChecks) || pageUnusable
 		if !skipPaths {
 			if notFound, probeJS, probeErr := s.probe404(ctx, baseURL, jsExpressions); probeErr == nil {
 				// Verify the 404 response is in-scope
@@ -221,6 +238,15 @@ func (s *Scanner) Scan(ctx context.Context, req models.ScanRequest) (*models.Sca
 	}
 
 	return result, nil
+}
+
+// effectiveMaxRedirects resolves the redirect cap for a scan: the per-request
+// option takes precedence when set (> 0), otherwise the scanner config default.
+func (s *Scanner) effectiveMaxRedirects(opts *models.ScanOptions) int {
+	if opts != nil && opts.MaxRedirects > 0 {
+		return opts.MaxRedirects
+	}
+	return s.cfg.Scanner.MaxRedirects
 }
 
 // evalJS evaluates a list of JS expressions on the given page and stores
